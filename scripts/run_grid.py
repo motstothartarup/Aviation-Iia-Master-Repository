@@ -1,3 +1,8 @@
+# at the very top of run_grid.py
+import os, sys
+sys.path.append(os.path.dirname(__file__))  # allow local imports
+from build_grid import build_grid
+
 # scripts/run_grid.py
 # Run ONLY the competitor grid and write HTML into docs/.
 
