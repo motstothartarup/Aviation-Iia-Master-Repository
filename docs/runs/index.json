@@ -6,6 +6,13 @@
       "wsize": 85.0,
       "wgrowth": 5.0,
       "path": "runs/LAX-85-5-1755726712"
+    },
+    {
+      "ts": 1755730186,
+      "iata": "DFW",
+      "wsize": 40.0,
+      "wgrowth": 30.0,
+      "path": "runs/DFW-40-30-1755730186"
     }
   ]
 }
