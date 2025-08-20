@@ -37,9 +37,9 @@ jobs:
       - name: Ensure docs folders
         run: mkdir -p docs docs/runs
 
-      - name: Run both builders
+      - name: Run all builders
         run: |
-          python scripts/run_both.py \
+          python scripts/run_all.py \
             --iata "${{ github.event.inputs.iata }}" \
             --wsize "${{ github.event.inputs.wsize }}" \
             --wgrowth "${{ github.event.inputs.wgrowth }}"
