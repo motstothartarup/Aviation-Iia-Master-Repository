@@ -1,10 +1,11 @@
 # scripts/build_map.py
-# Library-style builder for the ACA Americas map.
-# - build_map() returns a folium.Map (no file writes).
-# - If run as __main__, it writes docs/aca_map.html (same visuals/behavior as your working script).
+# ACA Americas map with:
+#  - level badge stacked ABOVE IATA in each label
+#  - optional highlighting (bigger dot + red stroke) for a set of IATA codes
+# build_map(highlight_iatas=None) -> folium.Map
+# If executed as a script, writes docs/aca_map.html.
 
 import io
-import json
 import os
 import sys
 from datetime import datetime, timezone
@@ -27,34 +28,45 @@ PALETTE = {
     "Level 5": "#E74C3C",
 }
 
+# Show as a short badge above IATA
+LEVEL_BADGE = {
+    "Level 1": "1",
+    "Level 2": "2",
+    "Level 3": "3",
+    "Level 3+": "3+",
+    "Level 4": "4",
+    "Level 4+": "4+",
+    "Level 5": "5",
+}
+
 RADIUS = {"large": 8, "medium": 7, "small": 6}
 STROKE = 2
 
 LABEL_GAP_PX = 10  # vertical gap between dot and label
 
-# --- Zoom tuning knobs (ONLY zoom logic uses these) ---
-ZOOM_SNAP = 0.10           # allow fractional zoom
-ZOOM_DELTA = 0.25          # keyboard +/- step
-WHEEL_PX_PER_ZOOM = 300    # higher = gentler wheel zoom
-WHEEL_DEBOUNCE_MS = 10     # smaller = more responsive wheel
+# --- Zoom tuning knobs ---
+ZOOM_SNAP = 0.10
+ZOOM_DELTA = 0.25
+WHEEL_PX_PER_ZOOM = 300
+WHEEL_DEBOUNCE_MS = 10
 
 # --- Position DB knobs ---
-DB_MAX_HISTORY = 200       # keep last N snapshots
-UPDATE_DEBOUNCE_MS = 120   # debounce for move/zoom updates
+DB_MAX_HISTORY = 200
+UPDATE_DEBOUNCE_MS = 120
 
 # --- Stacking behavior ---
-STACK_ON_AT_Z = 7.5        # stacks when z <= this (zoomed OUT). Tweak (e.g., 8.3)
-HIDE_LABELS_BELOW_Z = 5    # hide ALL labels when z < this; restore when z >= this
+STACK_ON_AT_Z = 7.5
+HIDE_LABELS_BELOW_Z = 5
 
-# --- Grouping distance in real-world miles (converted to pixels per zoom) ---
-GROUP_RADIUS_MILES = 30.0  # ~30 miles
+# --- Grouping distance in miles ---
+GROUP_RADIUS_MILES = 30.0
 
 # --- Visual tweak for stacked rows ---
-STACK_ROW_GAP_PX = 6       # spacing between rows in stack (visual)
+STACK_ROW_GAP_PX = 6
 
 # default standalone output
 OUT_DIR = "docs"
-OUT_FILE = os.path.join(OUT_DIR, "aca_map.html")  # <- changed from index.html
+OUT_FILE = os.path.join(OUT_DIR, "aca_map.html")
 
 
 # ---------- helpers ----------
@@ -73,7 +85,7 @@ h1{margin:0 0 10px 0}code{background:#f5f7fb;padding:2px 6px;border-radius:6px}<
   <h1>ACA Americas map</h1>
   <p><strong>Status:</strong> temporarily unavailable.</p>
   <p><strong>Reason:</strong> __MSG__</p>
-  <p>Last attempt: __UPDATED__. This page updates automatically once per day.</p>
+  <p>Last attempt: __UPDATED__. This page updates when the generator runs.</p>
 </div>""".replace("__MSG__", msg).replace("__UPDATED__", updated)
     with open(OUT_FILE, "w", encoding="utf-8") as f:
         f.write(html)
@@ -100,14 +112,11 @@ def parse_aca_table(html: str) -> pd.DataFrame:
     if table is not None:
         try:
             dfs = pd.read_html(io.StringIO(str(table)))
-        except Exception as e:
-            print("read_html on scoped table failed:", e, file=sys.stderr)
+        except Exception:
+            pass
 
     if not dfs:
-        try:
-            all_tables = pd.read_html(html)
-        except Exception as e:
-            raise RuntimeError(f"Could not parse any HTML tables: {e}")
+        all_tables = pd.read_html(html)
         target = None
         want = {"airport", "airport code", "country", "region", "level"}
         for df in all_tables:
@@ -140,9 +149,8 @@ def parse_aca_table(html: str) -> pd.DataFrame:
         return r
 
     aca["region4"] = aca["region"].map(region4)
-    aca = aca[aca["aca_level"].isin(LEVELS)].dropna(subset=["iata"])
-    if aca.empty:
-        raise RuntimeError("ACA dataframe is empty after filtering.")
+    aca = aca[aca["aca_level"].isin(LEVELS)].dropna(subset=["iata"]).copy()
+    aca["iata"] = aca["iata"].astype(str).str.upper()
     return aca
 
 
@@ -150,14 +158,21 @@ def load_coords() -> pd.DataFrame:
     url = "https://raw.githubusercontent.com/davidmegginson/ourairports-data/main/airports.csv"
     use = ["iata_code", "latitude_deg", "longitude_deg", "type", "name", "iso_country"]
     df = pd.read_csv(url, usecols=use).rename(columns={"iata_code": "iata"})
-    df = df.dropna(subset=["iata", "latitude_deg", "longitude_deg"])
+    df = df.dropna(subset=["iata", "latitude_deg", "longitude_deg"]).copy()
+    df["iata"] = df["iata"].astype(str).str.upper()
     df["size"] = df["type"].map({"large_airport": "large", "medium_airport": "medium"}).fillna("small")
     return df
 
 
 # ---------- main ----------
-def build_map() -> folium.Map:
-    """Return a folium.Map for ACA airports in the Americas (no file writes)."""
+def build_map(highlight_iatas=None) -> folium.Map:
+    """
+    Return a folium.Map for ACA airports in the Americas.
+    highlight_iatas: optional set/list of IATA codes to emphasize (bigger + red stroke).
+    """
+    highlight = set((highlight_iatas or []))
+    highlight = {str(x).upper() for x in highlight}
+
     aca_html = fetch_aca_html()
     aca = parse_aca_table(aca_html)
     coords = load_coords()
@@ -180,9 +195,9 @@ def build_map() -> folium.Map:
     groups = {lvl: folium.FeatureGroup(name=lvl, show=True).add_to(m) for lvl in LEVELS}
 
     updated = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
-    BUILD_VER = "base-r1.7-zoom+posdb+stack-out+miles+pane-anchoring"
+    BUILD_VER = "base-r1.7-zoom+posdb+stack-out+miles+pane-anchoring+lvl-badge+highlight"
 
-    # --- CSS + footer badge + zoom meter + stack styles (labels-only look) ---
+    # --- CSS + footer badge + zoom meter + stack styles ---
     badge_html = (
         r"""
 <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate"/>
@@ -191,16 +206,25 @@ def build_map() -> folium.Map:
 <style>
 .leaflet-tooltip.iata-tt{
   background: transparent; border: 0; box-shadow: none;
-  color: #6e6e6e;
+  color: #2e2e2e;
   font-family: "Open Sans","Helvetica Neue",Arial,sans-serif;
-  font-weight: 1000; font-size: 12px; letter-spacing: 0.5px;
-  text-transform: uppercase; white-space: nowrap; text-align:left;
+  font-weight: 900; font-size: 12px; letter-spacing: 0.5px;
+  text-transform: uppercase; white-space: nowrap; text-align:center;
 }
 .leaflet-tooltip-top:before,
 .leaflet-tooltip-bottom:before,
 .leaflet-tooltip-left:before,
 .leaflet-tooltip-right:before{ display:none !important; }
-.leaflet-tooltip.iata-tt .ttxt{ display:inline-block; transform:translate(0px,0px); will-change:transform; }
+
+/* We feed the tooltip HTML already containing .ttxt */
+.leaflet-tooltip.iata-tt .ttxt { display:inline-block; line-height:1.05; }
+.leaflet-tooltip.iata-tt .lvlchip {
+  display:block; font-size:11px; font-weight:900; color:#111; margin-bottom:1px;
+}
+.leaflet-tooltip.iata-tt .iata {
+  display:block; font-size:12px; font-weight:1000; letter-spacing:0.5px;
+}
+
 .leaflet-control-layers-expanded{ box-shadow:0 4px 14px rgba(0,0,0,.12); border-radius:10px; }
 .last-updated {
   position:absolute; right:12px; bottom:12px; z-index:9999;
@@ -215,6 +239,7 @@ def build_map() -> folium.Map:
   font:12px "Open Sans","Helvetica Neue",Arial,sans-serif; color:#485260;
   user-select:none; pointer-events:none;
 }
+
 /* Stack list styled like labels (no bg/border/shadow) */
 .iata-stack{
   position:absolute; z-index:9998; pointer-events:none;
@@ -251,7 +276,7 @@ def build_map() -> folium.Map:
         '<div class="row"><span class="dot" style="background:{color}"></span>{lvl}</div>'.format(
             color=PALETTE.get(lvl, "#666"), lvl=lvl
         )
-        for lvl in reversed(LEVELS)  # show Level 5 at top → Level 1 at bottom
+        for lvl in reversed(LEVELS)
     )
     legend_html = (
         '<div class="legend-box">'
@@ -264,15 +289,26 @@ def build_map() -> folium.Map:
     # --- dots + permanent tooltips (labels) ---
     for _, r in amer.iterrows():
         lat, lon = float(r.latitude_deg), float(r.longitude_deg)
-        size = r.size
-        radius = RADIUS.get(size, 6)
-        offset_y = -(radius + STROKE + max(LABEL_GAP_PX, 1))
+        size_key = r.get("size", "small")
+        base_radius = RADIUS.get(size_key, 6)
+        is_hot = r.iata in highlight
+
+        # style tweaks for highlighted competitors
+        stroke_color = "#111"
+        stroke_weight = STROKE
+        radius = base_radius
+        if is_hot:
+            stroke_color = "#E74C3C"   # red border
+            stroke_weight = max(STROKE, 3)
+            radius = base_radius + 3   # bigger bullet
+
+        offset_y = -(radius + stroke_weight + max(LABEL_GAP_PX, 1))
 
         dot = folium.CircleMarker(
             [lat, lon],
             radius=radius,
-            color="#111",
-            weight=STROKE,
+            color=stroke_color,
+            weight=stroke_weight,
             fill=True,
             fill_color=PALETTE.get(r.aca_level, "#666"),
             fill_opacity=0.95,
@@ -283,14 +319,20 @@ def build_map() -> folium.Map:
                 max_width=320,
             ),
         )
+
+        # two-line label: ACA level badge (number) on top, IATA below
+        lvl_badge = LEVEL_BADGE.get(r.aca_level, "")
+        label_html = f'<div class="ttxt"><span class="lvlchip">{lvl_badge}</span><span class="iata">{r.iata}</span></div>'
+
         dot.add_child(
             folium.Tooltip(
-                text=r.iata,
+                label_html,
                 permanent=True,
                 direction="top",
                 offset=(0, offset_y),
                 sticky=False,
-                class_name="iata-tt size-{size} tt-{iata}".format(size=size, iata=r.iata),
+                class_name=f"iata-tt size-{size_key} tt-{r.iata}",
+                parse_html=True,
             )
         )
         dot.add_to(groups[r.aca_level])
@@ -309,22 +351,11 @@ def build_map() -> folium.Map:
     const DB_MAX_HISTORY = __DB_MAX_HISTORY__;
     const UPDATE_DEBOUNCE_MS = __UPDATE_DEBOUNCE_MS__;
 
-    // behavior
-    const STACK_ON_AT_Z = __STACK_ON_AT_Z__;              // stacks when z <= this
-    const HIDE_LABELS_BELOW_Z = __HIDE_LABELS_BELOW_Z__;  // hide all labels when z < this
-    const GROUP_RADIUS_MILES = __GROUP_RADIUS_MILES__;     // miles, scaled to px per zoom
+    const STACK_ON_AT_Z = __STACK_ON_AT_Z__;
+    const HIDE_LABELS_BELOW_Z = __HIDE_LABELS_BELOW_Z__;
+    const GROUP_RADIUS_MILES = __GROUP_RADIUS_MILES__;
 
-    // snapshot DB
     window.ACA_DB = window.ACA_DB || { latest:null, history:[] };
-    function pushSnapshot(snap){
-      window.ACA_DB.latest = snap;
-      window.ACA_DB.history.push(snap);
-      if (window.ACA_DB.history.length > DB_MAX_HISTORY){
-        window.ACA_DB.history.splice(0, window.ACA_DB.history.length - DB_MAX_HISTORY);
-      }
-    }
-    window.ACA_DB.get = function(){ return window.ACA_DB.latest; };
-    window.ACA_DB.export = function(){ try { return JSON.stringify(window.ACA_DB.latest, null, 2); } catch(e){ return "{}"; } };
 
     function until(cond, cb, tries=200, delay=50){
       (function tick(n){ if(cond()) return cb(); if(n<=0) return; setTimeout(()=>tick(n-1), delay); })(tries);
@@ -340,7 +371,6 @@ def build_map() -> folium.Map:
       const map  = window[MAP_NAME];
       const pane = map.getPanes().tooltipPane;
 
-      // smooth wheel zoom
       function tuneWheel(){
         map.options.zoomSnap = ZOOM_SNAP;
         map.options.zoomDelta = ZOOM_DELTA;
@@ -350,7 +380,6 @@ def build_map() -> folium.Map:
       }
       tuneWheel();
 
-      // zoom meter
       const meter = document.getElementById('zoomMeter');
       function updateMeter(){
         if (!meter) return;
@@ -361,7 +390,6 @@ def build_map() -> folium.Map:
         meter.textContent = "Zoom: " + pct + "% (z=" + z.toFixed(2) + ")";
       }
 
-      // helpers
       function rectBaseForPane(thePane){
         const prect = thePane.getBoundingClientRect();
         return function rect(el){
@@ -369,23 +397,10 @@ def build_map() -> folium.Map:
           return { x:r.left - prect.left, y:r.top - prect.top, w:r.width, h:r.height };
         };
       }
-      function ensureWrap(el){
-        let txt = el.querySelector('.ttxt');
-        if (!txt){
-          const span = document.createElement('span');
-          span.className = 'ttxt';
-          span.textContent = el.textContent;
-          el.textContent = '';
-          el.appendChild(span);
-          txt = span;
-        }
-        return txt;
-      }
+      function clearStacks(){ pane.querySelectorAll('.iata-stack').forEach(n => n.remove()); }
       function showAllLabels(){ pane.querySelectorAll('.iata-tt').forEach(el => { el.style.display = ''; }); }
       function hideAllLabels(){ pane.querySelectorAll('.iata-tt').forEach(el => { el.style.display = 'none'; }); }
-      function clearStacks(){ pane.querySelectorAll('.iata-stack').forEach(n => n.remove()); }
 
-      // miles -> px at current zoom (approx at center, horizontal)
       function milesToPixels(miles){
         const meters = miles * 1609.344;
         const center = map.getCenter();
@@ -403,8 +418,7 @@ def build_map() -> folium.Map:
         map.eachLayer(lyr=>{
           if (!(lyr instanceof L.CircleMarker)) return;
           const tt = (lyr.getTooltip && lyr.getTooltip()) || null;
-          if (!tt) return;
-          if (!tt._container) tt.update();
+          if (!tt || !tt._container) return;
           const el = tt._container;
           if (!el || !el.classList.contains('iata-tt')) return;
           el.style.display = '';
@@ -413,13 +427,10 @@ def build_map() -> folium.Map:
           const cls = Array.from(el.classList);
           const size = (cls.find(c=>c.startsWith('size-'))||'size-small').slice(5);
           const iata = (cls.find(c=>c.startsWith('tt-'))||'tt-').slice(3);
-          const color = (lyr.options && (lyr.options.fillColor || lyr.options.color)) || "#666";
-          const txt = ensureWrap(el);
-          const R = rect(txt);
-          const cx = R.x + R.w/2, cy = R.y + R.h/2;
-          items.push({ iata, size, color, el,
+          const R = rect(el.querySelector('.ttxt') || el);
+          items.push({ iata, size, el,
             dot:{ lat:latlng.lat, lng:latlng.lng, x:pt.x, y:pt.y },
-            label:{ x:R.x, y:R.y, w:R.w, h:R.h, cx, cy } });
+            label:{ x:R.x, y:R.y, w:R.w, h:R.h } });
         });
         return items;
       }
@@ -431,7 +442,7 @@ def build_map() -> folium.Map:
         function uni(a,b){ a=find(a); b=find(b); if(a!==b) parent[b]=a; }
         const R2 = radiusPx * radiusPx;
         for (let i=0;i<n;i++){
-          for (let j=i+1;j<=n-1;j++){
+          for (let j=i+1;j<n;j++){
             const dx = items[i].dot.x - items[j].dot.x;
             const dy = items[i].dot.y - items[j].dot.y;
             if (dx*dx + dy*dy <= R2) uni(i,j);
@@ -468,65 +479,43 @@ def build_map() -> folium.Map:
           div.style.left = left + "px";
           div.style.top  = top  + "px";
         });
-        return { anchor:{ iata:anchor.iata, x:anchor.label.x, y:anchor.label.y },
-                 iatas: sorted.map(i=>items[i].iata) };
+        return { iatas: sorted.map(i=>items[i].iata) };
       }
 
       function applyClustering(items){
         clearStacks();
         showAllLabels();
         const z = map.getZoom();
-        if (z < __HIDE_LABELS_BELOW_Z__) {
-          hideAllLabels();
-          return { stacks:[], hidden:[], hiddenAll:true };
-        }
-        if (z > __STACK_ON_AT_Z__) return { stacks:[], hidden:[], hiddenAll:false };
-        const radiusPx = milesToPixels(__GROUP_RADIUS_MILES__);
+        if (z < HIDE_LABELS_BELOW_Z){ hideAllLabels(); return; }
+        if (z > STACK_ON_AT_Z) return;
+        const radiusPx = milesToPixels(GROUP_RADIUS_MILES);
         const clusters = buildClusters(items, radiusPx);
-        const hidden = []; const stacks = [];
         clusters.forEach(g=>{
-          g.forEach(i=>{ items[i].el.style.display = 'none'; hidden.push(items[i].iata); });
-          stacks.push(drawStack(g, items));
+          g.forEach(i=>{ items[i].el.style.display = 'none'; });
+          drawStack(g, items);
         });
-        return { stacks, hidden, hiddenAll:false };
       }
 
-      function buildSnapshot(items, stacks){
-        const now = new Date().toISOString();
-        const z = map.getZoom();
-        const b = map.getBounds();
-        return {
-          ts: now,
-          zoom: z,
-          bounds: { n: b.getNorth(), s: b.getSouth(), e: b.getEast(), w: b.getWest() },
-          size: { w: map.getSize().x, h: map.getSize().y },
-          count: items.length,
-          items: items.map(it=>({ iata:it.iata, size:it.size, color:it.color, dot:it.dot, label:it.label })),
-          stacks
-        };
-      }
-
-      let tmr = null;
       function updateAll(){
-        const meter = document.getElementById('zoomMeter');
-        if (meter){
-          const z = map.getZoom();
-          const minZ = (map.getMinZoom && map.getMinZoom()) || 0;
-          let maxZ = (map.getMaxZoom && map.getMaxZoom()); if (maxZ == null) maxZ = 19;
-          const pct = Math.round(((z - minZ)/Math.max(1e-6, (maxZ - minZ))) * 100);
-          meter.textContent = "Zoom: " + pct + "% (z=" + z.toFixed(2) + ")";
-        }
+        updateMeter();
         requestAnimationFrame(()=>requestAnimationFrame(()=>{
           const items = collectItems();
-          const { stacks } = applyClustering(items);
-          (window.ACA_DB = window.ACA_DB || { latest:null, history:[] });
-          window.ACA_DB.latest = buildSnapshot(items, stacks);
+          applyClustering(items);
         }));
       }
-      function scheduleUpdate(){ if (tmr) clearTimeout(tmr); tmr = setTimeout(updateAll, __UPDATE_DEBOUNCE_MS__); }
+      function updateMeter(){
+        if (!meter) return;
+        const z = map.getZoom();
+        const minZ = (map.getMinZoom && map.getMinZoom()) || 0;
+        let maxZ = (map.getMaxZoom && map.getMaxZoom()); if (maxZ == null) maxZ = 19;
+        const pct = Math.round(((z - minZ)/Math.max(1e-6, (maxZ - minZ))) * 100);
+        meter.textContent = "Zoom: " + pct + "% (z=" + z.toFixed(2) + ")";
+      }
+      function scheduleUpdate(){ setTimeout(updateAll, __UPDATE_DEBOUNCE_MS__); }
 
       if (map.whenReady) map.whenReady(updateAll);
       map.on('zoomend moveend overlayadd overlayremove layeradd layerremove resize', scheduleUpdate);
+      updateAll();
     }
   } catch (err) {
     console.error("[ACA] init failed:", err);
