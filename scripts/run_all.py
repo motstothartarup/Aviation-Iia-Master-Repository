@@ -1,21 +1,19 @@
 # scripts/run_both.py
-# One runner to build BOTH:
-#   - docs/grid.html    (competitor grid from ACI Excel)
-#   - docs/aca_table.html (ACA region board, defaulting to target's region)
-# And a simple docs/index.html that shows both via iframes.
-#
-# Usage (in Actions or locally):
-#   python scripts/run_both.py --iata LAX --wsize 85 --wgrowth 5
+# Builds ALL THREE outputs and assembles one page:
+#   - docs/grid.html         (competitor grid)
+#   - docs/aca_table.html    (ACA region board)
+#   - docs/aca_map.html      (ACA Americas map from your existing script)
+# And a combined docs/index.html with three iframes.
 
 import os
 import time
 import argparse
 
-# import sibling builders (same folder)
 from build_grid import build_grid
 from build_aca_table import build_aca_table_html
+from generate_map import build_map   # ← calls your map builder
 
-EXCEL_PATH = "data/ACI_2024_NA_Traffic.xlsx"  # adjust if your filename differs
+EXCEL_PATH = "data/ACI_2024_NA_Traffic.xlsx"
 
 INDEX_TEMPLATE = """<!doctype html><meta charset="utf-8">
 <title>{title}</title>
@@ -39,6 +37,11 @@ INDEX_TEMPLATE = """<!doctype html><meta charset="utf-8">
     <div class="muted">ACA Airports by Region (defaulted to {iata})</div>
     <iframe src="{aca_rel}"></iframe>
   </div>
+
+  <div class="card">
+    <div class="muted">ACA Map (Americas)</div>
+    <iframe src="{map_rel}"></iframe>
+  </div>
 </div>
 """
 
@@ -56,30 +59,35 @@ def main():
     os.makedirs("docs", exist_ok=True)
     os.makedirs("docs/runs", exist_ok=True)
 
-    # --- Build grid ---
-    grid_res = build_grid(EXCEL_PATH, iata, wsize, wgrowth)   # returns {"html", "union", "target", "weights"}
+    # --- Grid ---
+    grid_res = build_grid(EXCEL_PATH, iata, wsize, wgrowth)
     grid_html = grid_res["html"]
-
     with open("docs/grid.html", "w", encoding="utf-8") as f:
         f.write(grid_html)
 
-    # --- Build ACA table (default region = that airport's; highlight target) ---
+    # --- ACA table ---
     aca_html, _aca_df = build_aca_table_html(iata)
     with open("docs/aca_table.html", "w", encoding="utf-8") as f:
         f.write(aca_html)
 
-    # --- Assemble simple dashboard index ---
-    title = f"{iata} — Grid + ACA"
+    # --- ACA map (calls your code) ---
+    fmap = build_map()
+    map_path = "docs/aca_map.html"
+    fmap.save(map_path)
+
+    # --- Assemble combined page ---
+    title = f"{iata} — Grid + ACA + Map"
     index_html = INDEX_TEMPLATE.format(
         title=title,
         grid_rel="grid.html",
         aca_rel="aca_table.html",
+        map_rel="aca_map.html",
         iata=iata,
     )
     with open("docs/index.html", "w", encoding="utf-8") as f:
         f.write(index_html)
 
-    # --- Also write a frozen snapshot under /docs/runs/.../index.html ---
+    # --- Frozen snapshot under /docs/runs/... ---
     run_id = str(int(time.time()))
     run_dir = f"docs/runs/{iata}-{int(wsize)}-{int(wgrowth)}-{run_id}"
     os.makedirs(run_dir, exist_ok=True)
@@ -88,10 +96,13 @@ def main():
         f.write(grid_html)
     with open(os.path.join(run_dir, "aca_table.html"), "w", encoding="utf-8") as f:
         f.write(aca_html)
+    fmap.save(os.path.join(run_dir, "aca_map.html"))
+
     snap_index = INDEX_TEMPLATE.format(
         title=title,
         grid_rel="grid.html",
         aca_rel="aca_table.html",
+        map_rel="aca_map.html",
         iata=iata,
     )
     with open(os.path.join(run_dir, "index.html"), "w", encoding="utf-8") as f:
@@ -100,6 +111,7 @@ def main():
     print("Wrote:")
     print("  docs/grid.html")
     print("  docs/aca_table.html")
+    print("  docs/aca_map.html")
     print("  docs/index.html")
     print(f"  {run_dir}/index.html")
 
