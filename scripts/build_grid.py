@@ -18,19 +18,44 @@ FAA_REGIONS = {
     "Western-Pacific":{"CA","NV","AZ","HI","GU"},
 }
 
+# ==== EDIT THESE to exactly match your ACA map palette (by FAA Region) ====
+REGION_COLORS = {
+    "Alaskan":            "#2E7D32",
+    "New England":        "#1957A6",
+    "Eastern":            "#7E57C2",
+    "Southern":           "#E83F2E",
+    "Great Lakes":        "#00838F",
+    "Central":            "#6D6E71",
+    "Southwest":          "#F59E0B",
+    "Northwest Mountain": "#10B981",
+    "Western-Pacific":    "#EF4444",
+    "Unknown":            "#9aa2af",
+}
+# ========================================================================
+
 CSS = """
 <style>
-.container{max-width:1100px;margin:18px auto;font-family:Inter,system-ui,Arial}
-.header .meta{color:#6b7280}
-.row{display:grid;grid-template-columns:190px 1fr;column-gap:16px;align-items:start;margin:12px 0}
-.cat{font-weight:800}
-.grid{display:grid;grid-template-columns:repeat(10,minmax(84px,1fr));gap:10px}
-.chip{display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:56px;
-      padding:8px 10px;border:1px solid #9aa2af;border-radius:14px;background:#f6f8fa;color:#111827;text-align:center}
+:root{
+  --gap:10px; --radius:14px; --ink:#111827; --muted:#6b7280; --border:#e5e7eb; --chipbg:#f6f8fa;
+}
+.container{max-width:1100px;margin:14px auto 18px auto;padding:0 10px;font-family:Inter,system-ui,Arial}
+.header h3{margin:0 0 4px 0}
+.header .meta{color:var(--muted)}
+.row{display:grid;grid-template-columns:220px 1fr;column-gap:16px;align-items:start;margin:10px 0}
+.cat{font-weight:800;line-height:1.2}
+.grid{display:grid;grid-template-columns:repeat(10,minmax(84px,1fr));gap:var(--gap)}
+.chip{
+  display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:56px;
+  padding:8px 10px;border:1px solid #9aa2af;border-radius:var(--radius);background:var(--chipbg);
+  color:var(--ink);text-align:center; position:relative;
+}
 .chip .code{font-weight:800;line-height:1.05}
-.chip .dev{font-size:11px;color:#6b7280;line-height:1.05;margin-top:2px}
+.chip .dev{font-size:11px;color:var(--muted);line-height:1.05;margin-top:2px}
 .chip.empty{visibility:hidden}
-.chip.origin{border-color:#E74C3C;box-shadow:0 0 0 2px rgba(231,76,60,.2) inset}
+.chip.origin{box-shadow:0 0 0 2px rgba(231,76,60,.22) inset;border-color:#E74C3C}
+.dot{
+  width:10px;height:10px;border-radius:999px;position:absolute;top:8px;left:8px;
+}
 </style>
 """
 
@@ -50,25 +75,29 @@ def _load_aci(excel_path: str) -> pd.DataFrame:
     c_yoy       = _pick(df, ["% chg 2024-2023","% chg 2024 - 2023","% chg 2023-2022","yoy %","% change"])
     if c_country:
         df = df[df[c_country].astype(str).str.contains("United States", case=False, na=False)]
+
     def _state(s):
         if not isinstance(s,str): return None
         parts = re.split(r"\s+", s.strip())
         return parts[-1] if parts else None
+
     df["state"] = df[c_citystate].apply(_state) if c_citystate else None
     df["name"]  = df[c_airport].astype(str)
     df["iata"]  = df[c_iata].astype(str).str.upper()
     df["total_passengers"] = pd.to_numeric(df[c_total], errors="coerce")
     df["yoy_growth_pct"]   = pd.to_numeric(df[c_yoy], errors="coerce") if c_yoy else np.nan
     df = df.dropna(subset=["iata","state","total_passengers"]).reset_index(drop=True)
+
     def _faa(st):
         s = str(st).upper()
         for reg, states in FAA_REGIONS.items():
             if s in states: return reg
         return "Unknown"
+
     df["faa_region"] = df["state"].apply(_faa)
     region_totals = df.groupby("faa_region")["total_passengers"].sum().rename("region_total")
     df = df.merge(region_totals, on="faa_region", how="left")
-    df["share_of_region_pct"] = (df["total_passengers"] / df["region_total"] * 100).round(3)
+    df["share_of_region_pct"] = (df["total_passengers"] / df["region_total"] * 100).round(2)
     return df
 
 def _dev(val, target, pct):
@@ -80,6 +109,11 @@ def _dev(val, target, pct):
     if abs(target) < 1e-9: return ""
     return f"{(diff/target)*100:+.1f}%"
 
+def _chip_color_style(region: str) -> str:
+    color = REGION_COLORS.get(region, REGION_COLORS["Unknown"])
+    # left dot + colored border to match ACA palette
+    return f"border-color:{color};"
+
 def _grid_html(rows, metric_col, target_val, pct_metric, origin_iata):
     chips=[]
     for _, r in rows.iterrows():
@@ -87,7 +121,13 @@ def _grid_html(rows, metric_col, target_val, pct_metric, origin_iata):
         dev=_dev(r[metric_col], target_val, pct_metric)
         dev_html=f"<span class='dev'>{dev}</span>" if dev else "<span class='dev'>&nbsp;</span>"
         cls="chip origin" if code==origin_iata else "chip"
-        chips.append(f"<div class='{cls}'><span class='code'>{code}</span>{dev_html}</div>")
+        dot_color = REGION_COLORS.get(r.get("faa_region","Unknown"), REGION_COLORS["Unknown"])
+        style = _chip_color_style(r.get("faa_region","Unknown"))
+        chips.append(
+            f"<div class='{cls}' data-region='{r.get('faa_region','Unknown')}' style='{style}'>"
+            f"<span class='dot' style='background:{dot_color}' aria-hidden='true'></span>"
+            f"<span class='code'>{code}</span>{dev_html}</div>"
+        )
     while len(chips)<10:
         chips.append("<div class='chip empty'><span class='code'>&nbsp;</span><span class='dev'>&nbsp;</span></div>")
     return "".join(chips[:10])
@@ -132,25 +172,25 @@ def build_grid(excel_path: str, iata: str, wsize: float, wgrowth: float, out_htm
     r1, r2, r3, r4 = sets["total"], sets["growth"], sets["share"], sets["composite"]
     growth_target = r2["_target_growth"].iloc[0] if "_target_growth" in r2.columns else target["yoy_growth_pct"]
 
-    total  = _grid_html(r1, "total_passengers", target["total_passengers"], False, iata)
-    growth = _grid_html(r2, "yoy_growth_pct",   growth_target, True,  iata)
-    share  = _grid_html(r3, "share_of_region_pct", target["share_of_region_pct"], True, iata)
-    comp   = _grid_html(r4, "total_passengers", target["total_passengers"], False, iata)  # composite: keep two-line UI
+    total  = _grid_html(r1, "total_passengers",      target["total_passengers"],      False, iata)
+    growth = _grid_html(r2, "yoy_growth_pct",        growth_target,                   True,  iata)
+    share  = _grid_html(r3, "share_of_region_pct",   target["share_of_region_pct"],   True,  iata)
+    comp   = _grid_html(r4, "total_passengers",      target["total_passengers"],      False, iata)  # keep two-line UI
 
     header = f"""
     <div class="header">
-      <h3 style="margin:0">{target['iata']} — {target['name']}</h3>
+      <h3>{target['iata']} — {target['name']}</h3>
       <div class="meta">State: {target['state']} · FAA: {target['faa_region']} ·
-      Pax: {int(target['total_passengers']):,} · Share: {target['share_of_region_pct']}%</div>
+      Pax (total): {int(target['total_passengers']):,} · Share of region: {target['share_of_region_pct']}%</div>
     </div>"""
 
     html = f"""<!doctype html><meta charset="utf-8"><title>Competitor Grid</title>
 {CSS}
 <div class="container">
   {header}
-  <div class="row"><div class="cat">Total Passengers</div><div class="grid">{total}</div></div>
-  <div class="row"><div class="cat">Growth (YoY %)</div><div class="grid">{growth}</div></div>
-  <div class="row"><div class="cat">Share of Region</div><div class="grid">{share}</div></div>
+  <div class="row"><div class="cat">Total passengers (int’l + dom)</div><div class="grid">{total}</div></div>
+  <div class="row"><div class="cat">Growth 2023→2024</div><div class="grid">{growth}</div></div>
+  <div class="row"><div class="cat">Share of region (airport ÷ FAA region)</div><div class="grid">{share}</div></div>
   <div class="row"><div class="cat">Composite (weights: {wsize:.0f}/{wgrowth:.0f}/{wshare:.0f})</div><div class="grid">{comp}</div></div>
 </div>"""
 
