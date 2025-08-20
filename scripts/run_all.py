@@ -1,22 +1,6 @@
 # scripts/run_all.py
 # Build ALL outputs + dashboard with a "Reset" modal to switch between prior runs
 # and a link to trigger a new build via workflow_dispatch.
-#
-# Usage:
-#   python scripts/run_all.py --iata LAX --wsize 85 --wgrowth 5
-#
-# Requires:
-#   - scripts/build_grid.py -> build_grid(xlsx_path, iata, wsize, wgrowth) -> {"html","union","target","weights"}
-#   - scripts/build_aca_table.py -> build_aca_table_html(iata) -> (html, df)
-#   - scripts/build_map.py -> build_map(highlight_iatas=None) -> folium.Map
-#
-# Outputs:
-#   docs/grid.html
-#   docs/aca_table.html
-#   docs/aca_map.html
-#   docs/index.html
-#   docs/runs/<iata>-<wsize>-<wgrowth>-<ts>/...(snapshot)
-#   docs/runs/index.json (manifest)
 
 import os
 import time
@@ -41,18 +25,18 @@ DASHBOARD_TEMPLATE = r"""<!doctype html><meta charset="utf-8">
     --bg:#f6f8fb; --ink:#1f2937; --muted:#6b7280; --border:#e5e7eb; --card:#fff; --accent:#0d6efd;
   }
   html,body { margin:0; padding:0; background:var(--bg); color:var(--ink); font:16px/1.45 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Arial,sans-serif; }
-  .wrap { max-width:1200px; margin:0 auto; padding:24px; }
-  .topbar { display:flex; justify-content:space-between; align-items:center; margin-bottom:12px; gap:12px; flex-wrap:wrap; }
-  h2 { margin:0; font-size:22px; }
+  .wrap { max-width:1200px; margin:0 auto; padding:16px 16px 20px 16px; } /* tighter */
+  .topbar { display:flex; justify-content:space-between; align-items:center; margin-bottom:8px; gap:12px; flex-wrap:wrap; }
+  h2 { margin:0; font-size:20px; }
   .btn {
     display:inline-flex; align-items:center; gap:8px; padding:8px 12px; border-radius:10px;
     border:1px solid var(--border); background:#fff; cursor:pointer; font-size:14px;
   }
   .btn:hover { background:#fafbfc; }
-  .card { background:var(--card); border:1px solid var(--border); border-radius:12px; box-shadow:0 2px 10px rgba(0,0,0,.05); padding:12px 12px; margin:16px 0; }
-  .muted { color:var(--muted); font-size:13px; margin-bottom:8px; }
-  iframe { width:100%; height:720px; border:0; border-radius:12px; box-shadow:0 2px 10px rgba(0,0,0,.05); background:#fff; }
-  @media (max-width: 900px) { iframe { height: 600px; } }
+  .card { background:var(--card); border:1px solid var(--border); border-radius:12px; box-shadow:0 2px 10px rgba(0,0,0,.05); padding:10px 10px; margin:12px 0; }
+  .muted { color:var(--muted); font-size:13px; margin-bottom:6px; }
+  iframe { width:100%; height:620px; border:0; border-radius:12px; box-shadow:0 2px 10px rgba(0,0,0,.05); background:#fff; }
+  @media (max-width: 900px) { iframe { height: 520px; } }
 
   /* Modal */
   .modal-backdrop {
