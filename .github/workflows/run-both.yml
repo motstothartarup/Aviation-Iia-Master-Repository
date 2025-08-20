@@ -1,4 +1,4 @@
-name: Build competitor grid (HTML)
+name: Build grid + ACA table (HTML)
 
 on:
   workflow_dispatch:
@@ -20,7 +20,7 @@ permissions:
   contents: write
 
 jobs:
-  build-grid:
+  build-both:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -37,9 +37,9 @@ jobs:
       - name: Ensure docs folders
         run: mkdir -p docs docs/runs
 
-      - name: Run grid builder
+      - name: Run both builders
         run: |
-          python scripts/run_grid.py \
+          python scripts/run_both.py \
             --iata "${{ github.event.inputs.iata }}" \
             --wsize "${{ github.event.inputs.wsize }}" \
             --wgrowth "${{ github.event.inputs.wgrowth }}"
@@ -49,7 +49,7 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add docs
-          git commit -m "Grid: ${{ github.event.inputs.iata }} (run ${{ github.run_id }})" || echo "Nothing to commit"
+          git commit -m "Grid+ACA: ${{ github.event.inputs.iata }} (run ${{ github.run_id }})" || echo "Nothing to commit"
           git push
 
       - name: Print URLs
@@ -57,5 +57,5 @@ jobs:
           REPO=${{ github.repository }}
           USER_OR_ORG=${REPO%%/*}
           NAME=${REPO#*/}
-          echo "Open the latest grid at:"
+          echo "Open the combined page:"
           echo "  https://${USER_OR_ORG}.github.io/${NAME}/"
