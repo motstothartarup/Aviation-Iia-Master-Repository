@@ -1,19 +1,64 @@
 # scripts/run_all.py
+# Build ALL outputs + dashboard with a "Reset" modal to switch between prior runs
+# and a link to trigger a new build via workflow_dispatch.
+#
+# Usage:
+#   python scripts/run_all.py --iata LAX --wsize 85 --wgrowth 5
+#
+# Requires:
+#   - scripts/build_grid.py -> build_grid(xlsx_path, iata, wsize, wgrowth) -> {"html","union","target","weights"}
+#   - scripts/build_aca_table.py -> build_aca_table_html(iata, aci_excel_path=...) -> (html, df)
+#   - scripts/build_map.py -> build_map(highlight_iatas=None) -> folium.Map
+#
+# Outputs:
+#   docs/grid.html
+#   docs/aca_table.html
+#   docs/aca_map.html
+#   docs/index.html
+#   docs/runs/<iata>-<wsize>-<wgrowth>-<ts>/...(snapshot)
+#   docs/runs/index.json (manifest)
+
 import os
 import sys
 import time
 import json
 import argparse
+import importlib.util
 
-# --- Add these 3 lines right after the stdlib imports ---
+# --- robust sibling imports (works in GH Actions and local shells) ---
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+REPO_ROOT = os.path.dirname(SCRIPT_DIR)
 if SCRIPT_DIR not in sys.path:
     sys.path.insert(0, SCRIPT_DIR)
-# --------------------------------------------------------
 
-from build_grid import build_grid
-from build_aca_table import build_aca_table_html
-from build_map import build_map
+def _import_by_path(module_name: str, file_name: str):
+    path = os.path.join(SCRIPT_DIR, file_name)
+    spec = importlib.util.spec_from_file_location(module_name, path)
+    if spec is None or spec.loader is None:
+        raise ImportError(f"Cannot load {module_name} from {path}")
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)  # type: ignore[attr-defined]
+    return mod
+
+# Try normal import first; fall back to explicit path import if needed.
+try:
+    from build_grid import build_grid  # type: ignore
+except Exception:
+    _bg = _import_by_path("build_grid_mod", "build_grid.py")
+    build_grid = _bg.build_grid
+
+try:
+    from build_aca_table import build_aca_table_html  # type: ignore
+except Exception:
+    _bt = _import_by_path("build_aca_table_mod", "build_aca_table.py")
+    build_aca_table_html = _bt.build_aca_table_html
+
+try:
+    from build_map import build_map  # type: ignore
+except Exception:
+    _bm = _import_by_path("build_map_mod", "build_map.py")
+    build_map = _bm.build_map
+# --- end robust imports ---
 
 EXCEL_PATH = "data/ACI_2024_NA_Traffic.xlsx"
 DOCS_DIR = "docs"
@@ -136,7 +181,6 @@ DASHBOARD_TEMPLATE = r"""<!doctype html><meta charset="utf-8">
   const btnReset  = document.getElementById('btnReset');
   const btnClose  = document.getElementById('btnClose');
   const runSelect = document.getElementById('runSelect');
-  const btnApply  = document.getElementById('btnApplyRun');
 
   function openModal(){ modalBg.style.display = "flex"; modalBg.setAttribute("aria-hidden", "false"); }
   function closeModal(){ modalBg.style.display = "none"; modalBg.setAttribute("aria-hidden", "true"); }
@@ -225,8 +269,8 @@ def main():
     with open(os.path.join(DOCS_DIR, "grid.html"), "w", encoding="utf-8") as f:
         f.write(grid_html)
 
-    # 2) ACA table
-    aca_html, _aca_df = build_aca_table_html(iata)
+    # 2) ACA table (pass Excel path so badges use same data file)
+    aca_html, _aca_df = build_aca_table_html(iata, aci_excel_path=EXCEL_PATH)
     with open(os.path.join(DOCS_DIR, "aca_table.html"), "w", encoding="utf-8") as f:
         f.write(aca_html)
 
@@ -267,7 +311,7 @@ def main():
         "wgrowth": wgrowth,
         "path": f"runs/{iata}-{int(wsize)}-{int(wgrowth)}-{ts}"
     })
-    manifest["runs"] = manifest["runs"][-100:]  # cap to last 100
+    manifest["runs"] = manifest["runs"][-100:]  # keep last 100
     _save_manifest(manifest)
 
     print("Wrote:")
@@ -275,7 +319,9 @@ def main():
     print("  docs/aca_table.html")
     print("  docs/aca_map.html")
     print("  docs/index.html")
-    print(f"  {run_dir}/index.html")
+    print(f"  {run_dir}/grid.html")
+    print(f"  {run_dir}/aca_table.html")
+    print(f"  {run_dir}/aca_map.html")
     print("Updated manifest:", MANIFEST)
 
 if __name__ == "__main__":
