@@ -6,8 +6,6 @@ import os, re, argparse
 import numpy as np
 import pandas as pd
 
-__all__ = ["build_grid"]
-
 FAA_REGIONS = {
     "Alaskan":{"AK"},
     "New England":{"ME","NH","VT","MA","RI","CT"},
@@ -139,16 +137,14 @@ def _grid_html(rows, metric_col, target_val, pct_metric, origin_iata):
             f"<span class='dot' style='background:{dot_color}' aria-hidden='true'></span>"
             f"<span class='code'>{code}</span>{dev_html}</div>"
         )
-    return "".join(chips)  # exactly top 5; no fillers
+    return "".join(chips)  # no fillers; exactly top 5
 
 def _nearest_sets(df, iata, w_size, w_growth, w_share, topn=5):
     t = df.loc[df["iata"]==iata].iloc[0]
+    # total
     cand = df[df["iata"]!=iata].copy()
-
-    # total pax
     r1 = cand.assign(abs_diff_pax=(cand["total_passengers"]-t["total_passengers"]).abs()) \
              .sort_values("abs_diff_pax").head(topn)
-
     # growth (median fallback)
     g = pd.to_numeric(cand["yoy_growth_pct"], errors="coerce")
     g_med = g.median()
@@ -156,11 +152,9 @@ def _nearest_sets(df, iata, w_size, w_growth, w_share, topn=5):
     r2 = cand.assign(yoy_growth_pct=g.fillna(g_med),
                      abs_diff_growth=(g.fillna(g_med)-tg).abs(),
                      _target_growth=tg).sort_values("abs_diff_growth").head(topn)
-
-    # share of region
+    # share any-region
     r3 = cand.assign(abs_diff_share=(cand["share_of_region_pct"]-t["share_of_region_pct"]).abs()) \
              .sort_values("abs_diff_share").head(topn)
-
     # composite
     s = max(1e-9, w_size+w_growth+w_share)
     w_size, w_growth, w_share = w_size/s, w_growth/s, w_share/s
@@ -171,7 +165,6 @@ def _nearest_sets(df, iata, w_size, w_growth, w_share, topn=5):
     share_sim = 1 - (diff/(diff.max()+1e-9))
     r4 = cand.assign(score=(w_size*size_sim + w_growth*growth_sim + w_share*share_sim)) \
              .sort_values("score", ascending=False).head(topn)
-
     sets = {"total": r1, "growth": r2, "share": r3, "composite": r4}
     union = {iata} | set(r1["iata"]) | set(r2["iata"]) | set(r3["iata"]) | set(r4["iata"])
     return t, sets, union
@@ -186,14 +179,16 @@ def build_grid(excel_path: str, iata: str, wsize: float, wgrowth: float, out_htm
     r1, r2, r3, r4 = sets["total"], sets["growth"], sets["share"], sets["composite"]
     growth_target = r2["_target_growth"].iloc[0] if "_target_growth" in r2.columns else target["yoy_growth_pct"]
 
+    # Build grids
     total  = _grid_html(r1, "total_passengers",      target["total_passengers"],      False, iata)
     growth = _grid_html(r2, "yoy_growth_pct",        growth_target,                   True,  iata)
     share  = _grid_html(r3, "share_of_region_pct",   target["share_of_region_pct"],   True,  iata)
     comp   = _grid_html(r4, "total_passengers",      target["total_passengers"],      False, iata)
 
-    ref_total  = f"{target['iata']}: {_fmt_int(target['total_passengers'])}"
+    # Reference values to show under each header for the TARGET airport
+    ref_total = f"{target['iata']}: {_fmt_int(target['total_passengers'])}"
     ref_growth = f"{target['iata']}: {_fmt_pct(growth_target, signed=True)}"
-    ref_share  = f"{target['iata']}: {_fmt_pct(target['share_of_region_pct'], decimals=2)}"
+    ref_share = f"{target['iata']}: {_fmt_pct(target['share_of_region_pct'], signed=False, decimals=2)}"
 
     header = f"""
     <div class="header">
