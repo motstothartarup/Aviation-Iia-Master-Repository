@@ -1,11 +1,15 @@
 # scripts/run_all.py
-# Build ALL outputs + dashboard with a "Reset" modal to switch between prior runs
-# and a link to trigger a new build via workflow_dispatch.
-
 import os
+import sys
 import time
 import json
 import argparse
+
+# --- Add these 3 lines right after the stdlib imports ---
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+if SCRIPT_DIR not in sys.path:
+    sys.path.insert(0, SCRIPT_DIR)
+# --------------------------------------------------------
 
 from build_grid import build_grid
 from build_aca_table import build_aca_table_html
