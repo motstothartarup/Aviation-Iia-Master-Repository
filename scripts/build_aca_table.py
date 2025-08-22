@@ -1,6 +1,5 @@
 # scripts/build_aca_table.py
 # Library-style builder: scrape ACA, build region board HTML, return html + df.
-
 import io
 import json
 from datetime import datetime, timezone
@@ -51,12 +50,14 @@ def parse_aca_table(html: str) -> pd.DataFrame:
             }
         )[["iata", "airport", "country", "region", "aca_level"]]
     )
+
     def region4(r: str) -> str:
         if r in ("North America", "Latin America & the Caribbean"):
             return "Americas"
         if r == "UKIMEA":
             return "Europe"
         return r
+
     aca["region4"] = aca["region"].map(region4)
     aca = aca.dropna(subset=["iata", "aca_level", "region4"]).copy()
     aca["iata"] = aca["iata"].astype(str).str.upper()
@@ -75,21 +76,28 @@ def make_payload(df: pd.DataFrame) -> dict:
         by_region[reg] = level_map
     return {"levels_desc": LEVELS_DESC, "regions": regions, "by_region": by_region}
 
-def build_aca_table_html(target_iata: str | None = None) -> tuple[str, pd.DataFrame]:
-    """Return (html, aca_df). If target_iata is provided, default to its region and highlight it."""
+def build_aca_table_html(target_iata: str | None = None,
+                         competitors: dict[str, list[str]] | None = None) -> tuple[str, pd.DataFrame]:
+    """
+    Return (html, aca_df).
+    - target_iata: airport to highlight.
+    - competitors: dict {iata: [categories]} to annotate, e.g. {"DFW": ["Passengers","Growth"]}.
+    """
     html = fetch_aca_html()
     df = parse_aca_table(html)
     payload = make_payload(df)
 
     updated = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
     data_json = json.dumps(payload, separators=(",", ":"))
+    competitors_json = json.dumps(competitors or {}, separators=(",", ":"))
 
     # Determine default region and highlight
     target_iata = (target_iata or "").upper()
     if target_iata and (df["iata"] == target_iata).any():
         default_region = df.loc[df["iata"] == target_iata, "region4"].iloc[0]
     else:
-        default_region = "Americas" if "Americas" in payload["regions"] else (payload["regions"][0] if payload["regions"] else "")
+        default_region = "Americas" if "Americas" in payload["regions"] else (
+            payload["regions"][0] if payload["regions"] else "")
 
     page = f"""<!doctype html>
 <meta charset="utf-8">
@@ -137,14 +145,16 @@ def build_aca_table_html(target_iata: str | None = None) -> tuple[str, pd.DataFr
       <tbody></tbody>
     </table>
 
-    <div class="muted" style="margin-top:10px">Codes are IATA; levels sorted 5 → 1.</div>
+    <div class="muted" style="margin-top:10px">Codes are IATA; levels sorted 5 → 1. Competitor annotations in brackets.</div>
   </div>
 </div>
 
 <script id="aca-data" type="application/json">{data_json}</script>
+<script id="competitor-data" type="application/json">{competitors_json}</script>
 <script>
 (function(){{
   const DATA = JSON.parse(document.getElementById('aca-data').textContent);
+  const COMP = JSON.parse(document.getElementById('competitor-data').textContent);
   const sel = document.getElementById('regionSelect');
   const tbody = document.querySelector('#acaTable tbody');
   const levels = DATA.levels_desc || [];
@@ -170,7 +180,11 @@ def build_aca_table_html(target_iata: str | None = None) -> tuple[str, pd.DataFr
       const tdCount=document.createElement('td'); tdCount.className='count'; tdCount.textContent=String(codes.length);
       if(codes.length){{
         codes.forEach(c=>{{
-          const chip=document.createElement('code'); chip.textContent=c;
+          let label = c;
+          if (COMP[c]) {{
+            label += " [" + COMP[c].join(", ") + "]";
+          }}
+          const chip=document.createElement('code'); chip.textContent=label;
           if (c===target) chip.className='hl';
           tdCodes.appendChild(chip);
         }});
