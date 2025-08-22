@@ -1,7 +1,7 @@
 # scripts/build_map.py
 # ACA Americas map with:
 #  - level badge stacked ABOVE IATA in each label
-#  - optional highlighting (bigger dot + red stroke) for a set of IATA codes
+#  - optional highlighting for a set of IATA codes
 # build_map(highlight_iatas=None) -> folium.Map
 # If executed as a script, writes docs/aca_map.html.
 
@@ -46,8 +46,8 @@ LABEL_GAP_PX = 10  # vertical gap between dot and label
 
 # --- Zoom tuning knobs ---
 ZOOM_SNAP = 0.10
-ZOOM_DELTA = 0.25
-WHEEL_PX_PER_ZOOM = 300
+ZOOM_DELTA = 0.75          # was 0.25 → triple zoom per tick
+WHEEL_PX_PER_ZOOM = 100    # was 300 → triple scroll sensitivity
 WHEEL_DEBOUNCE_MS = 10
 
 # --- Position DB knobs ---
@@ -168,7 +168,7 @@ def load_coords() -> pd.DataFrame:
 def build_map(highlight_iatas=None) -> folium.Map:
     """
     Return a folium.Map for ACA airports in the Americas.
-    highlight_iatas: optional set/list of IATA codes to emphasize (bigger + red stroke).
+    highlight_iatas: optional set/list of IATA codes to emphasize.
     """
     highlight = set((highlight_iatas or []))
     highlight = {str(x).upper() for x in highlight}
@@ -185,17 +185,22 @@ def build_map(highlight_iatas=None) -> folium.Map:
     if amer.empty:
         raise RuntimeError("No rows for the Americas after joining coordinates.")
 
-    bounds = [
-        [amer.latitude_deg.min(), amer.longitude_deg.min()],
-        [amer.latitude_deg.max(), amer.longitude_deg.max()],
-    ]
+    # Center: centroid of all plotted points; zoom: open at 4.7 per request.
+    center_lat = float(amer["latitude_deg"].mean())
+    center_lon = float(amer["longitude_deg"].mean())
 
-    m = folium.Map(tiles="CartoDB Positron", zoomControl=True, prefer_canvas=True)
-    m.fit_bounds(bounds)
+    m = folium.Map(
+        tiles="CartoDB Positron",
+        zoomControl=True,
+        prefer_canvas=True,
+        location=[center_lat, center_lon],
+        zoom_start=4.7,       # open at zoom 4.7
+    )
+
     groups = {lvl: folium.FeatureGroup(name=lvl, show=True).add_to(m) for lvl in LEVELS}
 
     updated = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
-    BUILD_VER = "base-r1.7-zoom+posdb+stack-out+miles+pane-anchoring+lvl-badge+highlight"
+    BUILD_VER = "r1.8-zoomx3+open4.7+yellow-hot+sizes+opacity"
 
     # --- CSS + footer badge + zoom meter + stack styles ---
     badge_html = (
@@ -293,25 +298,28 @@ def build_map(highlight_iatas=None) -> folium.Map:
         base_radius = RADIUS.get(size_key, 6)
         is_hot = r.iata in highlight
 
-        # style tweaks for highlighted competitors
-        stroke_color = "#111"
-        stroke_weight = STROKE
-        radius = base_radius
+        # sizing & style per request
         if is_hot:
-            stroke_color = "#E74C3C"   # red border
+            radius = base_radius * 1.5        # +50% size for competitors
+            stroke_color = "#F1C40F"          # yellow outline
             stroke_weight = max(STROKE, 3)
-            radius = base_radius + 3   # bigger bullet
+            fill_opacity = 0.95
+        else:
+            radius = base_radius * 0.75       # -25% size for non-competitors
+            stroke_color = "#111"
+            stroke_weight = STROKE
+            fill_opacity = 0.47               # 50% opacity
 
         offset_y = -(radius + stroke_weight + max(LABEL_GAP_PX, 1))
 
         dot = folium.CircleMarker(
             [lat, lon],
-            radius=radius,
+            radius=float(radius),
             color=stroke_color,
-            weight=stroke_weight,
+            weight=int(stroke_weight),
             fill=True,
             fill_color=PALETTE.get(r.aca_level, "#666"),
-            fill_opacity=0.95,
+            fill_opacity=float(fill_opacity),
             popup=folium.Popup(
                 "<b>{airport}</b><br>IATA: {iata}<br>ACA: <b>{lvl}</b><br>Country: {ctry}".format(
                     airport=r.airport, iata=r.iata, lvl=r.aca_level, ctry=r.country
