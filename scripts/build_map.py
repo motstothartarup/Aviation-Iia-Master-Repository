@@ -1,7 +1,8 @@
 # scripts/build_map.py
 # ACA Americas map with:
 #  - level badge stacked ABOVE IATA in each label
-#  - optional highlighting for a set of IATA codes
+#  - optional highlighting (bigger dot + yellow stroke) for a set of IATA codes
+#  - non-interest airports: no border, no labels, dimmed & smaller
 # build_map(highlight_iatas=None) -> folium.Map
 # If executed as a script, writes docs/aca_map.html.
 
@@ -44,7 +45,7 @@ STROKE = 2
 
 LABEL_GAP_PX = 10  # vertical gap between dot and label
 
-# --- Zoom tuning knobs ---
+# --- Zoom tuning knobs (triple speed) ---
 ZOOM_SNAP = 0.10
 ZOOM_DELTA = 0.75          # was 0.25 → triple zoom per tick
 WHEEL_PX_PER_ZOOM = 100    # was 300 → triple scroll sensitivity
@@ -56,7 +57,7 @@ UPDATE_DEBOUNCE_MS = 120
 
 # --- Stacking behavior ---
 STACK_ON_AT_Z = 7.5
-HIDE_LABELS_BELOW_Z = 5
+HIDE_LABELS_BELOW_Z = 4.4  # labels visible at >= 4.4
 
 # --- Grouping distance in miles ---
 GROUP_RADIUS_MILES = 30.0
@@ -168,7 +169,7 @@ def load_coords() -> pd.DataFrame:
 def build_map(highlight_iatas=None) -> folium.Map:
     """
     Return a folium.Map for ACA airports in the Americas.
-    highlight_iatas: optional set/list of IATA codes to emphasize.
+    highlight_iatas: optional set/list of IATA codes to emphasize (bigger + yellow stroke + labels).
     """
     highlight = set((highlight_iatas or []))
     highlight = {str(x).upper() for x in highlight}
@@ -185,7 +186,7 @@ def build_map(highlight_iatas=None) -> folium.Map:
     if amer.empty:
         raise RuntimeError("No rows for the Americas after joining coordinates.")
 
-    # Center: centroid of all plotted points; zoom: open at 4.7 per request.
+    # Center: centroid of all plotted points; zoom: open at 4.7
     center_lat = float(amer["latitude_deg"].mean())
     center_lon = float(amer["longitude_deg"].mean())
 
@@ -194,13 +195,13 @@ def build_map(highlight_iatas=None) -> folium.Map:
         zoomControl=True,
         prefer_canvas=True,
         location=[center_lat, center_lon],
-        zoom_start=4.7,       # open at zoom 4.7
+        zoom_start=4.7,
     )
 
     groups = {lvl: folium.FeatureGroup(name=lvl, show=True).add_to(m) for lvl in LEVELS}
 
     updated = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
-    BUILD_VER = "r1.8-zoomx3+open4.7+yellow-hot+sizes+opacity"
+    BUILD_VER = "r1.9-zoomx3+open4.7+yellow-hot+nolabels-cold+no-border-cold"
 
     # --- CSS + footer badge + zoom meter + stack styles ---
     badge_html = (
@@ -298,19 +299,20 @@ def build_map(highlight_iatas=None) -> folium.Map:
         base_radius = RADIUS.get(size_key, 6)
         is_hot = r.iata in highlight
 
-        # sizing & style per request
         if is_hot:
-            radius = base_radius * 1.5        # +50% size for competitors
-            stroke_color = "#F1C40F"          # yellow outline
+            # Highlighted competitors: yellow outline, +50% size, full opacity
+            radius = base_radius * 1.5
+            stroke_color = "#F1C40F"     # yellow outline
             stroke_weight = max(STROKE, 3)
             fill_opacity = 0.95
         else:
-            radius = base_radius * 0.75       # -25% size for non-competitors
-            stroke_color = "#111"
-            stroke_weight = STROKE
-            fill_opacity = 0.47               # 50% opacity
+            # Non-interest ports: NO border, smaller, dimmer, and NO LABEL
+            radius = base_radius * 0.75
+            stroke_color = "transparent"
+            stroke_weight = 0
+            fill_opacity = 0.50
 
-        offset_y = -(radius + stroke_weight + max(LABEL_GAP_PX, 1))
+        offset_y = -(radius + max(stroke_weight, 0) + max(LABEL_GAP_PX, 1))
 
         dot = folium.CircleMarker(
             [lat, lon],
@@ -328,21 +330,22 @@ def build_map(highlight_iatas=None) -> folium.Map:
             ),
         )
 
-        # two-line label: ACA level badge (number) on top, IATA below
-        lvl_badge = LEVEL_BADGE.get(r.aca_level, "")
-        label_html = f'<div class="ttxt"><span class="lvlchip">{lvl_badge}</span><span class="iata">{r.iata}</span></div>'
-
-        dot.add_child(
-            folium.Tooltip(
-                label_html,
-                permanent=True,
-                direction="top",
-                offset=(0, offset_y),
-                sticky=False,
-                class_name=f"iata-tt size-{size_key} tt-{r.iata}",
-                parse_html=True,
+        # ONLY add labels for highlighted competitors
+        if is_hot:
+            lvl_badge = LEVEL_BADGE.get(r.aca_level, "")
+            label_html = f'<div class="ttxt"><span class="lvlchip">{lvl_badge}</span><span class="iata">{r.iata}</span></div>'
+            dot.add_child(
+                folium.Tooltip(
+                    label_html,
+                    permanent=True,
+                    direction="top",
+                    offset=(0, offset_y),
+                    sticky=False,
+                    class_name=f"iata-tt size-{size_key} tt-{r.iata}",
+                    parse_html=True,
+                )
             )
-        )
+
         dot.add_to(groups[r.aca_level])
 
     folium.LayerControl(collapsed=False).add_to(m)
