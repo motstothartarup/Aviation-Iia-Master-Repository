@@ -1,13 +1,14 @@
 # scripts/build_aca_table.py
-# Library-style builder: scrape ACA, build region board HTML, return html + df.
-
 import io
 import json
+import re
 from datetime import datetime, timezone
+from pathlib import Path
 
 import pandas as pd
 import requests
 from bs4 import BeautifulSoup
+import numpy as np
 
 LEVELS_DESC = ['Level 5', 'Level 4+', 'Level 4', 'Level 3+', 'Level 3', 'Level 2', 'Level 1']
 
