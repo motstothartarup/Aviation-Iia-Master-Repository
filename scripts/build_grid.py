@@ -1,5 +1,5 @@
 # scripts/build_grid.py
-# Output 1: Competitor Grid (10×4) from your ACI Excel.
+# Output 1: Competitor Grid (5×4) from your ACI Excel.
 # Exposes build_grid(...). Also runnable as a script to write docs/grid.html.
 
 import os, re, argparse
@@ -41,9 +41,10 @@ CSS = """
 .container{max-width:1100px;margin:14px auto 18px auto;padding:0 10px;font-family:Inter,system-ui,Arial}
 .header h3{margin:0 0 4px 0}
 .header .meta{color:var(--muted)}
-.row{display:grid;grid-template-columns:220px 1fr;column-gap:16px;align-items:start;margin:10px 0}
+.row{display:grid;grid-template-columns:240px 1fr;column-gap:16px;align-items:start;margin:10px 0}
 .cat{font-weight:800;line-height:1.2}
-.grid{display:grid;grid-template-columns:repeat(10,minmax(84px,1fr));gap:var(--gap)}
+.cat .sub{display:block;color:var(--muted);font-weight:500;font-size:12px;margin-top:2px}
+.grid{display:grid;grid-template-columns:repeat(5,minmax(84px,1fr));gap:var(--gap)} /* 5 columns */
 .chip{
   display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:56px;
   padding:8px 10px;border:1px solid #9aa2af;border-radius:var(--radius);background:var(--chipbg);
@@ -51,11 +52,8 @@ CSS = """
 }
 .chip .code{font-weight:800;line-height:1.05}
 .chip .dev{font-size:11px;color:var(--muted);line-height:1.05;margin-top:2px}
-.chip.empty{visibility:hidden}
 .chip.origin{box-shadow:0 0 0 2px rgba(231,76,60,.22) inset;border-color:#E74C3C}
-.dot{
-  width:10px;height:10px;border-radius:999px;position:absolute;top:8px;left:8px;
-}
+.dot{ width:10px;height:10px;border-radius:999px;position:absolute;top:8px;left:8px; }
 </style>
 """
 
@@ -63,6 +61,18 @@ def _norm(s): return re.sub(r"\s+"," ",str(s)).strip().lower()
 def _pick(df, cands):
     for c in cands:
         if c in df.columns: return c
+
+def _fmt_int(n):
+    try:
+        return f"{int(round(float(n))):,}"
+    except Exception:
+        return "-"
+
+def _fmt_pct(x, signed=False, decimals=1):
+    if pd.isna(x): return "-"
+    val = float(x)
+    sign = "+" if (signed and val>=0) else ""
+    return f"{sign}{val:.{decimals}f}%"
 
 def _load_aci(excel_path: str) -> pd.DataFrame:
     raw = pd.read_excel(excel_path, header=2)
@@ -111,7 +121,6 @@ def _dev(val, target, pct):
 
 def _chip_color_style(region: str) -> str:
     color = REGION_COLORS.get(region, REGION_COLORS["Unknown"])
-    # left dot + colored border to match ACA palette
     return f"border-color:{color};"
 
 def _grid_html(rows, metric_col, target_val, pct_metric, origin_iata):
@@ -128,11 +137,9 @@ def _grid_html(rows, metric_col, target_val, pct_metric, origin_iata):
             f"<span class='dot' style='background:{dot_color}' aria-hidden='true'></span>"
             f"<span class='code'>{code}</span>{dev_html}</div>"
         )
-    while len(chips)<10:
-        chips.append("<div class='chip empty'><span class='code'>&nbsp;</span><span class='dev'>&nbsp;</span></div>")
-    return "".join(chips[:10])
+    return "".join(chips)  # no fillers; exactly top 5
 
-def _nearest_sets(df, iata, w_size, w_growth, w_share, topn=10):
+def _nearest_sets(df, iata, w_size, w_growth, w_share, topn=5):
     t = df.loc[df["iata"]==iata].iloc[0]
     # total
     cand = df[df["iata"]!=iata].copy()
@@ -168,30 +175,52 @@ def build_grid(excel_path: str, iata: str, wsize: float, wgrowth: float, out_htm
     df = _load_aci(excel_path)
     if df[df["iata"]==iata].empty:
         raise ValueError(f"IATA '{iata}' not found in ACI file.")
-    target, sets, union = _nearest_sets(df, iata, wsize, wgrowth, wshare, 10)
+    target, sets, union = _nearest_sets(df, iata, wsize, wgrowth, wshare, topn=5)
     r1, r2, r3, r4 = sets["total"], sets["growth"], sets["share"], sets["composite"]
     growth_target = r2["_target_growth"].iloc[0] if "_target_growth" in r2.columns else target["yoy_growth_pct"]
 
+    # Build grids
     total  = _grid_html(r1, "total_passengers",      target["total_passengers"],      False, iata)
     growth = _grid_html(r2, "yoy_growth_pct",        growth_target,                   True,  iata)
     share  = _grid_html(r3, "share_of_region_pct",   target["share_of_region_pct"],   True,  iata)
-    comp   = _grid_html(r4, "total_passengers",      target["total_passengers"],      False, iata)  # keep two-line UI
+    comp   = _grid_html(r4, "total_passengers",      target["total_passengers"],      False, iata)
+
+    # Reference values to show under each header for the TARGET airport
+    ref_total = f"{target['iata']}: {_fmt_int(target['total_passengers'])}"
+    ref_growth = f"{target['iata']}: {_fmt_pct(growth_target, signed=True)}"
+    ref_share = f"{target['iata']}: {_fmt_pct(target['share_of_region_pct'], signed=False, decimals=2)}"
 
     header = f"""
     <div class="header">
       <h3>{target['iata']} — {target['name']}</h3>
       <div class="meta">State: {target['state']} · FAA: {target['faa_region']} ·
-      Pax (total): {int(target['total_passengers']):,} · Share of region: {target['share_of_region_pct']}%</div>
+      Pax (total): {_fmt_int(target['total_passengers'])} · Share of region: {_fmt_pct(target['share_of_region_pct'], decimals=2)}</div>
     </div>"""
 
     html = f"""<!doctype html><meta charset="utf-8"><title>Competitor Grid</title>
 {CSS}
 <div class="container">
   {header}
-  <div class="row"><div class="cat">Total passengers (int’l + dom)</div><div class="grid">{total}</div></div>
-  <div class="row"><div class="cat">Growth 2023→2024</div><div class="grid">{growth}</div></div>
-  <div class="row"><div class="cat">Share of region (airport ÷ FAA region)</div><div class="grid">{share}</div></div>
-  <div class="row"><div class="cat">Composite (weights: {wsize:.0f}/{wgrowth:.0f}/{wshare:.0f})</div><div class="grid">{comp}</div></div>
+
+  <div class="row">
+    <div class="cat">Total passengers (int’l + dom)<span class="sub">Target — {ref_total}</span></div>
+    <div class="grid">{total}</div>
+  </div>
+
+  <div class="row">
+    <div class="cat">Growth 2023→2024<span class="sub">Target — {ref_growth}</span></div>
+    <div class="grid">{growth}</div>
+  </div>
+
+  <div class="row">
+    <div class="cat">Share of region (airport ÷ FAA region)<span class="sub">Target — {ref_share}</span></div>
+    <div class="grid">{share}</div>
+  </div>
+
+  <div class="row">
+    <div class="cat">Composite (weights: {wsize:.0f}/{wgrowth:.0f}/{wshare:.0f})<span class="sub">Top 5 closest overall</span></div>
+    <div class="grid">{comp}</div>
+  </div>
 </div>"""
 
     if out_html:
