@@ -24,6 +24,8 @@ import time
 import json
 import argparse
 import importlib.util
+import runpy
+from typing import Callable, Any
 
 # --- robust sibling imports (works in GH Actions and local shells) ---
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -32,6 +34,7 @@ if SCRIPT_DIR not in sys.path:
     sys.path.insert(0, SCRIPT_DIR)
 
 def _import_by_path(module_name: str, file_name: str):
+    """Import a module by absolute path; return the module object."""
     path = os.path.join(SCRIPT_DIR, file_name)
     spec = importlib.util.spec_from_file_location(module_name, path)
     if spec is None or spec.loader is None:
@@ -40,24 +43,46 @@ def _import_by_path(module_name: str, file_name: str):
     spec.loader.exec_module(mod)  # type: ignore[attr-defined]
     return mod
 
-# Try normal import first; fall back to explicit path import if needed.
+def _load_symbol(file_name: str, symbol: str) -> Callable[..., Any]:
+    """
+    Ultimate fallback: execute the file with runpy and extract the symbol
+    from the returned globals. Raises with a helpful error if missing.
+    """
+    path = os.path.join(SCRIPT_DIR, file_name)
+    globs = runpy.run_path(path, run_name=file_name)
+    fn = globs.get(symbol)
+    if not callable(fn):
+        available = ", ".join(sorted([k for k,v in globs.items() if callable(v)]))
+        raise ImportError(f"{symbol} not found in {file_name}. Available callables: {available or '(none)'}")
+    return fn
+
+# Try normal import first; then path import; then runpy symbol extract.
 try:
     from build_grid import build_grid  # type: ignore
 except Exception:
-    _bg = _import_by_path("build_grid_mod", "build_grid.py")
-    build_grid = _bg.build_grid
+    try:
+        _bg = _import_by_path("build_grid_mod", "build_grid.py")
+        build_grid = getattr(_bg, "build_grid")
+    except Exception:
+        build_grid = _load_symbol("build_grid.py", "build_grid")
 
 try:
     from build_aca_table import build_aca_table_html  # type: ignore
 except Exception:
-    _bt = _import_by_path("build_aca_table_mod", "build_aca_table.py")
-    build_aca_table_html = _bt.build_aca_table_html
+    try:
+        _bt = _import_by_path("build_aca_table_mod", "build_aca_table.py")
+        build_aca_table_html = getattr(_bt, "build_aca_table_html")
+    except Exception:
+        build_aca_table_html = _load_symbol("build_aca_table.py", "build_aca_table_html")
 
 try:
     from build_map import build_map  # type: ignore
 except Exception:
-    _bm = _import_by_path("build_map_mod", "build_map.py")
-    build_map = _bm.build_map
+    try:
+        _bm = _import_by_path("build_map_mod", "build_map.py")
+        build_map = getattr(_bm, "build_map")
+    except Exception:
+        build_map = _load_symbol("build_map.py", "build_map")
 # --- end robust imports ---
 
 EXCEL_PATH = "data/ACI_2024_NA_Traffic.xlsx"
