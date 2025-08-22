@@ -4,6 +4,7 @@
 # - Optionally read competitors from run_all via `competitors` dict.
 # - If not provided, will parse docs/grid.html to extract top-5 competitors per category
 #   (Passengers, Growth, Share, Composite) and annotate table entries as plain text tags.
+# - Adds yellow highlight to competitor chips and appends % deltas from Grid to each tag.
 
 import io
 import os
@@ -89,60 +90,55 @@ def make_payload(df: pd.DataFrame) -> dict:
         by_region[reg] = level_map
     return {"levels_desc": LEVELS_DESC, "regions": regions, "by_region": by_region}
 
-# ---------- NEW: Pull Top-5 competitors from docs/grid.html if run_all didn't pass any ----------
+# ---------- Pull Top-5 competitors from docs/grid.html if run_all didn't pass any ----------
 
 def _parse_grid_competitors_from_html(grid_html: str) -> Dict[str, List[str]]:
     """
-    Parse grid.html produced by build_grid.py and extract IATA codes per category.
-    Returns a dict: { IATA: ["Passengers","Growth","Share","Composite", ...] }
-    Assumes build_grid's HTML structure with .row blocks in order:
-      1) Total passengers
-      2) Growth
-      3) Share of region
-      4) Composite
+    Parse grid.html produced by build_grid.py and extract IATA codes per category,
+    appending the chip's displayed delta (e.g., '+3.2%') to the category tag.
+    Returns a dict: { IATA: ["Passengers +3.2%","Growth -1.1%","Share +0.6%","Composite +2.4%"] }
     """
     soup = BeautifulSoup(grid_html, "lxml")
     rows = soup.select(".container .row")
-    # Defensive: identify categories by their label text so order changes won't break it.
-    category_map = {}  # category -> list of iata
+
+    def _cat_from_label(txt: str) -> Optional[str]:
+        t = " ".join((txt or "").strip().lower().split())
+        if "composite" in t: return "Composite"
+        if "share of region" in t: return "Share"
+        if "growth" in t: return "Growth"
+        if "passenger" in t: return "Passengers"
+        return None
+
+    # Build competitors dict
+    comp: Dict[str, List[str]] = {}
     for row in rows:
         cat_el = row.select_one(".cat")
         grid_el = row.select_one(".grid")
         if not cat_el or not grid_el:
             continue
-        cat_text = " ".join(cat_el.get_text(strip=True).lower().split())
-        if "composite" in cat_text:
-            cat = "Composite"
-        elif "share of region" in cat_text:
-            cat = "Share"
-        elif "growth" in cat_text:
-            cat = "Growth"
-        elif "total passengers" in cat_text or "passengers" in cat_text:
-            cat = "Passengers"
-        else:
-            # Unknown category; skip
+        cat = _cat_from_label(cat_el.get_text())
+        if not cat:
             continue
 
-        codes = []
-        for chip in grid_el.select(".chip"):
-            code = chip.select_one(".code")
-            if not code:
+        # Walk chips (skip the origin/target chip)
+        chips = grid_el.select(".chip")
+        for chip in chips:
+            classes = chip.get("class", [])
+            if "origin" in classes:
                 continue
-            iata = code.get_text(strip=True).upper()
-            # Skip origin tile if you want (keep if needed):
-            # if "origin" in chip.get("class", []): continue
-            if iata and len(iata) <= 4:  # basic sanity
-                codes.append(iata)
-        # Top-5 are already the only ones rendered; but trim in case.
-        category_map[cat] = codes[:5]
+            code_el = chip.select_one(".code")
+            dev_el = chip.select_one(".dev")
+            if not code_el:
+                continue
+            iata = code_el.get_text(strip=True).upper()
+            delta = (dev_el.get_text(strip=True) if dev_el else "").strip()
+            # Format the tag *with* delta if present (keeps API as List[str])
+            tag = f"{cat} {delta}" if delta else cat
+            if iata and len(iata) <= 4:
+                comp.setdefault(iata, [])
+                if tag not in comp[iata]:
+                    comp[iata].append(tag)
 
-    # Build competitors dict
-    comp: Dict[str, List[str]] = {}
-    for cat, codes in category_map.items():
-        for c in codes:
-            comp.setdefault(c, [])
-            if cat not in comp[c]:
-                comp[c].append(cat)
     return comp
 
 def _discover_competitors_from_grid(grid_html_path: str = GRID_DEFAULT_PATH) -> Dict[str, List[str]]:
@@ -163,9 +159,9 @@ def build_aca_table_html(target_iata: Optional[str] = None,
     """
     Return (html, aca_df). If target_iata is provided, default to its region and highlight it.
 
-    competitors: optional dict { IATA: [ "Passengers", "Growth", "Share", "Composite" ] }.
-                 If None or empty, this function will attempt to parse docs/grid.html
-                 to extract top-5 competitors per category automatically.
+    competitors: optional dict { IATA: [ "Passengers +3.2%", "Growth -1.1%", ... ] }.
+                 If None or empty, this function will parse docs/grid.html to extract
+                 top-5 competitors per category automatically (tags already include deltas).
 
     grid_html_path: path to the grid HTML file (default docs/grid.html).
     """
@@ -212,6 +208,8 @@ def build_aca_table_html(target_iata: Optional[str] = None,
   td.count {{ text-align:right; width:80px; color:var(--muted); }}
   td.codes code {{ font-family: ui-monospace,SFMono-Regular,Menlo,Consolas,monospace; font-size:13px; background:#f5f7fb; padding:2px 6px; border-radius:6px; margin:2px 6px 2px 0; display:inline-block; }}
   code.hl {{ outline: 2px solid #E74C3C; outline-offset: 1px; }}
+  /* NEW: highlight competitor chips */
+  td.codes code.comp {{ background:#fff3cd; border:1px solid #f1c40f; }}
 </style>
 
 <div class="wrap">
@@ -238,7 +236,7 @@ def build_aca_table_html(target_iata: Optional[str] = None,
 
     <div class="muted" style="margin-top:10px">
       Codes are IATA; levels sorted 5 → 1.
-      Competitor annotations (from Grid) appear in brackets: [Passengers, Growth, Share, Composite].
+      Competitors from the Grid are highlighted and show category deltas in brackets.
     </div>
   </div>
 </div>
@@ -284,7 +282,8 @@ def build_aca_table_html(target_iata: Optional[str] = None,
       if(codes.length){{
         codes.forEach(c=>{{
           const chip=document.createElement('code'); chip.textContent=labelWithTags(c);
-          if (c===target) chip.className='hl';
+          if (c===target) chip.classList.add('hl');
+          if (Array.isArray(COMP[c]) && COMP[c].length) chip.classList.add('comp');  // NEW: yellow highlight
           tdCodes.appendChild(chip);
         }});
       }} else {{
