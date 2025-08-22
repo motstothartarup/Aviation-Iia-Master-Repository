@@ -1,5 +1,9 @@
 # scripts/build_aca_table.py
-# Builds ACA region table with competitor annotations from the Grid.
+# Library-style builder: scrape ACA, build region board HTML, return html + df.
+# Enhancements:
+# - Optionally read competitors from run_all via `competitors` dict.
+# - If not provided, will parse docs/grid.html to extract top-5 competitors per category
+#   (Passengers, Growth, Share, Composite) and annotate table entries as plain text tags.
 
 import io
 import os
@@ -12,15 +16,12 @@ import requests
 from bs4 import BeautifulSoup
 
 LEVELS_DESC = ['Level 5', 'Level 4+', 'Level 4', 'Level 3+', 'Level 3', 'Level 2', 'Level 1']
-GRID_DEFAULT_PATH = os.path.join("docs", "grid.html")
 
-# ----------------------------------------------------------
-#  Fetch ACA Data
-# ----------------------------------------------------------
+GRID_DEFAULT_PATH = os.path.join("docs", "grid.html")
 
 def fetch_aca_html(timeout: int = 45) -> str:
     url = "https://www.airportcarbonaccreditation.org/accredited-airports/"
-    headers = {"User-Agent": "Mozilla/5.0 (ACA-Table-Bot/1.1)",
+    headers = {"User-Agent": "Mozilla/5.0 (compatible; ACA-Table-Bot/1.0)",
                "Accept": "text/html,application/xhtml+xml"}
     r = requests.get(url, headers=headers, timeout=timeout)
     r.raise_for_status()
@@ -32,25 +33,36 @@ def parse_aca_table(html: str) -> pd.DataFrame:
     dfs = []
     table = soup.select_one(".airports-listview table")
     if table is not None:
-        dfs = pd.read_html(io.StringIO(str(table)))
+        try:
+            dfs = pd.read_html(io.StringIO(str(table)))
+        except Exception:
+            dfs = []
+
     if not dfs:
         all_tables = pd.read_html(html)
+        target = None
         want = {"airport", "airport code", "country", "region", "level"}
         for df in all_tables:
-            if want.issubset({str(c).strip().lower() for c in df.columns}):
-                dfs = [df]
+            cols = {str(c).strip().lower() for c in df.columns}
+            if want.issubset(cols):
+                target = df
                 break
-    if not dfs:
-        raise RuntimeError("ACA table not found on the page.")
+        if target is None:
+            raise RuntimeError("ACA table not found on the page.")
+        dfs = [target]
 
     raw = dfs[0]
-    aca = raw.rename(columns={
-        "Airport": "airport",
-        "Airport code": "iata",
-        "Country": "country",
-        "Region": "region",
-        "Level": "aca_level",
-    })[["iata", "airport", "country", "region", "aca_level"]]
+    aca = (
+        raw.rename(
+            columns={
+                "Airport": "airport",
+                "Airport code": "iata",
+                "Country": "country",
+                "Region": "region",
+                "Level": "aca_level",
+            }
+        )[["iata", "airport", "country", "region", "aca_level"]]
+    )
 
     def region4(r: str) -> str:
         if r in ("North America", "Latin America & the Caribbean"):
@@ -71,146 +83,223 @@ def make_payload(df: pd.DataFrame) -> dict:
         sub = df[df["region4"] == reg]
         level_map = {lvl: [] for lvl in LEVELS_DESC}
         for lvl, block in sub.groupby("aca_level"):
+            level_map.setdefault(lvl, [])
             codes = sorted(str(x).strip().upper() for x in block["iata"].dropna().unique())
             level_map[lvl].extend(codes)
         by_region[reg] = level_map
     return {"levels_desc": LEVELS_DESC, "regions": regions, "by_region": by_region}
 
-# ----------------------------------------------------------
-#  Grid Parsing (competitors + % deltas)
-# ----------------------------------------------------------
+# ---------- NEW: Pull Top-5 competitors from docs/grid.html if run_all didn't pass any ----------
 
-def _category_from_label(text: str) -> Optional[str]:
-    t = " ".join((text or "").strip().lower().split())
-    if "composite" in t: return "Composite"
-    if "share" in t: return "Share"
-    if "growth" in t: return "Growth"
-    if "passenger" in t: return "Passengers"
-    return None
-
-def _parse_grid_competitors(grid_html: str) -> Dict[str, Dict[str, str]]:
+def _parse_grid_competitors_from_html(grid_html: str) -> Dict[str, List[str]]:
     """
-    Parse docs/grid.html from build_grid.py and extract competitor IATAs + deltas.
-    Returns: { IATA: { "Passengers":"+3.2%", "Growth":"-1.1%", ... } }
+    Parse grid.html produced by build_grid.py and extract IATA codes per category.
+    Returns a dict: { IATA: ["Passengers","Growth","Share","Composite", ...] }
+    Assumes build_grid's HTML structure with .row blocks in order:
+      1) Total passengers
+      2) Growth
+      3) Share of region
+      4) Composite
     """
     soup = BeautifulSoup(grid_html, "lxml")
-    comp: Dict[str, Dict[str, str]] = {}
-
-    for row in soup.select(".container .row"):
+    rows = soup.select(".container .row")
+    # Defensive: identify categories by their label text so order changes won't break it.
+    category_map = {}  # category -> list of iata
+    for row in rows:
         cat_el = row.select_one(".cat")
         grid_el = row.select_one(".grid")
-        if not cat_el or not grid_el: continue
-        cat = _category_from_label(cat_el.get_text())
-        if not cat: continue
+        if not cat_el or not grid_el:
+            continue
+        cat_text = " ".join(cat_el.get_text(strip=True).lower().split())
+        if "composite" in cat_text:
+            cat = "Composite"
+        elif "share of region" in cat_text:
+            cat = "Share"
+        elif "growth" in cat_text:
+            cat = "Growth"
+        elif "total passengers" in cat_text or "passengers" in cat_text:
+            cat = "Passengers"
+        else:
+            # Unknown category; skip
+            continue
 
+        codes = []
         for chip in grid_el.select(".chip"):
-            if "origin" in chip.get("class", []):  # skip target itself
+            code = chip.select_one(".code")
+            if not code:
                 continue
-            code_el = chip.select_one(".code")
-            dev_el  = chip.select_one(".dev")
-            if not code_el: continue
-            iata = code_el.get_text(strip=True).upper()
-            delta = dev_el.get_text(strip=True) if dev_el else ""
-            comp.setdefault(iata, {})[cat] = delta
+            iata = code.get_text(strip=True).upper()
+            # Skip origin tile if you want (keep if needed):
+            # if "origin" in chip.get("class", []): continue
+            if iata and len(iata) <= 4:  # basic sanity
+                codes.append(iata)
+        # Top-5 are already the only ones rendered; but trim in case.
+        category_map[cat] = codes[:5]
 
+    # Build competitors dict
+    comp: Dict[str, List[str]] = {}
+    for cat, codes in category_map.items():
+        for c in codes:
+            comp.setdefault(c, [])
+            if cat not in comp[c]:
+                comp[c].append(cat)
     return comp
 
-def discover_competitors(grid_html_path: str = GRID_DEFAULT_PATH) -> Dict[str, Dict[str, str]]:
-    if not os.path.exists(grid_html_path): return {}
+def _discover_competitors_from_grid(grid_html_path: str = GRID_DEFAULT_PATH) -> Dict[str, List[str]]:
     try:
+        if not os.path.exists(grid_html_path):
+            return {}
         with open(grid_html_path, "r", encoding="utf-8") as f:
             html = f.read()
-        return _parse_grid_competitors(html)
+        return _parse_grid_competitors_from_html(html)
     except Exception:
         return {}
 
-# ----------------------------------------------------------
-#  Builder
-# ----------------------------------------------------------
+# ---------- /NEW ----------
 
 def build_aca_table_html(target_iata: Optional[str] = None,
+                         competitors: Optional[Dict[str, List[str]]] = None,
                          grid_html_path: str = GRID_DEFAULT_PATH) -> tuple[str, pd.DataFrame]:
-    """Return (html, aca_df)."""
-    # 1) scrape ACA
+    """
+    Return (html, aca_df). If target_iata is provided, default to its region and highlight it.
+
+    competitors: optional dict { IATA: [ "Passengers", "Growth", "Share", "Composite" ] }.
+                 If None or empty, this function will attempt to parse docs/grid.html
+                 to extract top-5 competitors per category automatically.
+
+    grid_html_path: path to the grid HTML file (default docs/grid.html).
+    """
+    # 1) Scrape ACA
     html = fetch_aca_html()
     df = parse_aca_table(html)
     payload = make_payload(df)
 
-    # 2) competitors from grid
-    competitors = discover_competitors(grid_html_path)
+    # 2) Competitors: prefer provided dict; otherwise derive from grid.html
+    comp_dict = competitors or {}
+    if not comp_dict:
+        comp_dict = _discover_competitors_from_grid(grid_html_path)
 
-    # 3) region
+    updated = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+    data_json = json.dumps(payload, separators=(",", ":"))
+    competitors_json = json.dumps(comp_dict, separators=(",", ":"))
+
+    # Determine default region and highlight
     target_iata = (target_iata or "").upper()
     if target_iata and (df["iata"] == target_iata).any():
         default_region = df.loc[df["iata"] == target_iata, "region4"].iloc[0]
     else:
-        default_region = "Americas" if "Americas" in payload["regions"] else payload["regions"][0]
-
-    updated = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
-    data_json = json.dumps(payload, separators=(",", ":"))
-    competitors_json = json.dumps(competitors, separators=(",", ":"))
+        default_region = "Americas" if "Americas" in payload["regions"] else (payload["regions"][0] if payload["regions"] else "")
 
     page = f"""<!doctype html>
 <meta charset="utf-8">
 <title>ACA Airports — Region Table</title>
+<meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate"/>
+<meta http-equiv="Pragma" content="no-cache"/>
+<meta http-equiv="Expires" content="0"/>
 <style>
-  body {{ margin:0; padding:24px; font:16px/1.45 -apple-system,BlinkMacSystemFont,Roboto,Arial,sans-serif; background:#f6f8fb; color:#333; }}
+  :root {{ --card-bg:#fff; --ink:#39424e; --muted:#6b7785; --border:#e6e8ec; }}
+  body {{ margin:0; padding:24px; font:16px/1.45 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Arial,sans-serif; color:var(--ink); background:#f6f8fb; }}
   .wrap {{ max-width:1100px; margin:0 auto; }}
-  .card {{ background:#fff; border-radius:12px; box-shadow:0 4px 20px rgba(0,0,0,.08); padding:20px; }}
+  .card {{ background:var(--card-bg); border-radius:12px; box-shadow:0 4px 20px rgba(0,0,0,.08); padding:20px 20px; }}
   h1 {{ margin:0 0 12px 0; font-size:22px; }}
+  .row {{ display:flex; gap:16px; align-items:center; flex-wrap:wrap; }}
+  .muted {{ color:var(--muted); font-size:13px; }}
+  select {{ font:14px/1.2 inherit; padding:6px 10px; border-radius:8px; border:1px solid var(--border); background:#fff; }}
   table {{ width:100%; border-collapse:separate; border-spacing:0; margin-top:14px; font-size:14px; }}
-  thead th {{ text-align:left; padding:8px 10px; background:#fafbfc; border-bottom:1px solid #ddd; }}
-  td {{ padding:8px 10px; border-bottom:1px solid #eee; vertical-align:top; }}
-  td.lvl {{ font-weight:700; width:110px; }}
-  code {{ font-family: ui-monospace,monospace; font-size:13px; background:#f5f7fb; padding:2px 6px; border-radius:6px; margin:2px 4px 2px 0; display:inline-block; }}
-  code.hl {{ outline:2px solid #E74C3C; outline-offset:1px; }}
-  code.comp {{ background:#fff9c4; border:1px solid #fbc02d; }}
-  .muted {{ font-size:12px; color:#666; }}
+  thead th {{ text-align:left; font-weight:600; padding:10px 12px; border-bottom:1px solid var(--border); background:#fafbfc; position:sticky; top:0; }}
+  tbody td {{ padding:10px 12px; border-bottom:1px solid var(--border); vertical-align:top; }}
+  td.lvl {{ font-weight:700; width:110px; white-space:nowrap; }}
+  td.count {{ text-align:right; width:80px; color:var(--muted); }}
+  td.codes code {{ font-family: ui-monospace,SFMono-Regular,Menlo,Consolas,monospace; font-size:13px; background:#f5f7fb; padding:2px 6px; border-radius:6px; margin:2px 6px 2px 0; display:inline-block; }}
+  code.hl {{ outline: 2px solid #E74C3C; outline-offset: 1px; }}
 </style>
 
 <div class="wrap">
   <div class="card">
-    <h1>ACA Airports by Region</h1>
-    <div class="muted">Last updated {updated}</div>
-    <table id="acaTable"><thead><tr><th>ACA Level</th><th>Airport Codes</th><th>Count</th></tr></thead><tbody></tbody></table>
+    <div class="row">
+      <h1>ACA Airports by Region</h1>
+      <div class="muted">Last updated: {updated}</div>
+    </div>
+    <div class="row" style="margin-top:8px;">
+      <label for="regionSelect" class="muted">Region:</label>
+      <select id="regionSelect" aria-label="Choose region"></select>
+    </div>
+
+    <table id="acaTable" aria-live="polite">
+      <thead>
+        <tr>
+          <th>ACA Level</th>
+          <th>Airport Codes</th>
+          <th style="text-align:right">Count</th>
+        </tr>
+      </thead>
+      <tbody></tbody>
+    </table>
+
+    <div class="muted" style="margin-top:10px">
+      Codes are IATA; levels sorted 5 → 1.
+      Competitor annotations (from Grid) appear in brackets: [Passengers, Growth, Share, Composite].
+    </div>
   </div>
 </div>
 
 <script id="aca-data" type="application/json">{data_json}</script>
-<script id="comp-data" type="application/json">{competitors_json}</script>
+<script id="competitor-data" type="application/json">{competitors_json}</script>
 <script>
 (function(){{
   const DATA = JSON.parse(document.getElementById('aca-data').textContent);
-  const COMPS = JSON.parse(document.getElementById('comp-data').textContent);
+  const COMP = JSON.parse(document.getElementById('competitor-data').textContent || "{{}}");
+  const sel = document.getElementById('regionSelect');
   const tbody = document.querySelector('#acaTable tbody');
+  const levels = DATA.levels_desc || [];
+  const regions = DATA.regions || [];
+  const byRegion = DATA.by_region || {{}};
   const target = "{target_iata}";
   const defaultRegion = "{default_region}";
-  const levels = DATA.levels_desc || [];
-  const buckets = (DATA.by_region[defaultRegion] || {});
 
-  levels.forEach(lvl => {{
-    const codes = (buckets[lvl] || []).slice().sort();
-    let tr = document.createElement('tr');
-    let tdLvl = document.createElement('td'); tdLvl.className='lvl'; tdLvl.textContent=lvl;
-    let tdCodes = document.createElement('td');
-    let tdCount = document.createElement('td'); tdCount.textContent = codes.length;
-    codes.forEach(c => {{
-      let chip = document.createElement('code'); chip.textContent = c;
-      if(c===target) chip.classList.add('hl');
-      if(COMPS[c]) {{
-        chip.classList.add('comp');
-        // append tags with deltas
-        let tags = [];
-        for (const [cat,val] of Object.entries(COMPS[c])) {{
-          tags.push(cat + (val? " " + val : ""));
-        }}
-        if(tags.length) chip.textContent = c + " ["+tags.join(", ")+"]";
+  function option(v,t){{const o=document.createElement('option');o.value=v;o.textContent=t;return o;}}
+  regions.forEach(r=>sel.appendChild(option(r,r)));
+  if (regions.includes(defaultRegion)) sel.value = defaultRegion;
+
+  function labelWithTags(iata){{
+    let label = iata;
+    const tags = COMP[iata];
+    if (Array.isArray(tags) && tags.length) {{
+      label += " [" + tags.join(", ") + "]";
+    }}
+    return label;
+  }}
+
+  function render(region){{
+    tbody.innerHTML='';
+    let total=0;
+    const buckets = byRegion[region] || {{}};
+    levels.forEach(lvl=>{{
+      const codes = (buckets[lvl] || []).slice().sort();
+      total += codes.length;
+      const tr = document.createElement('tr');
+      const tdLvl=document.createElement('td'); tdLvl.className='lvl'; tdLvl.textContent=lvl;
+      const tdCodes=document.createElement('td'); tdCodes.className='codes';
+      const tdCount=document.createElement('td'); tdCount.className='count'; tdCount.textContent=String(codes.length);
+      if(codes.length){{
+        codes.forEach(c=>{{
+          const chip=document.createElement('code'); chip.textContent=labelWithTags(c);
+          if (c===target) chip.className='hl';
+          tdCodes.appendChild(chip);
+        }});
+      }} else {{
+        tdCodes.innerHTML='<span class="muted">—</span>';
       }}
-      tdCodes.appendChild(chip);
+      tr.appendChild(tdLvl); tr.appendChild(tdCodes); tr.appendChild(tdCount);
+      tbody.appendChild(tr);
     }});
-    tr.appendChild(tdLvl); tr.appendChild(tdCodes); tr.appendChild(tdCount);
-    tbody.appendChild(tr);
-  }});
+    const trTotal=document.createElement('tr');
+    trTotal.innerHTML='<td class="lvl">Total</td><td></td><td class="count">'+total+'</td>';
+    tbody.appendChild(trTotal);
+  }}
+
+  sel.addEventListener('change', ()=>render(sel.value));
+  render(sel.value || regions[0] || '');
 }})();
 </script>
 """
