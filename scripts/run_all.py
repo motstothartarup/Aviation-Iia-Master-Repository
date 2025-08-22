@@ -25,7 +25,7 @@ DASHBOARD_TEMPLATE = r"""<!doctype html><meta charset="utf-8">
     --bg:#f6f8fb; --ink:#1f2937; --muted:#6b7280; --border:#e5e7eb; --card:#fff; --accent:#0d6efd;
   }
   html,body { margin:0; padding:0; background:var(--bg); color:var(--ink); font:16px/1.45 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Arial,sans-serif; }
-  .wrap { max-width:1200px; margin:0 auto; padding:16px 16px 20px 16px; } /* tighter */
+  .wrap { max-width:1200px; margin:0 auto; padding:16px 16px 20px 16px; }
   .topbar { display:flex; justify-content:space-between; align-items:center; margin-bottom:8px; gap:12px; flex-wrap:wrap; }
   h2 { margin:0; font-size:20px; }
   .btn {
@@ -122,7 +122,7 @@ DASHBOARD_TEMPLATE = r"""<!doctype html><meta charset="utf-8">
 
 <script>
 (function(){
-  const runManifestUrl = "runs/index.json"; // relative to /docs
+  const runManifestUrl = "runs/index.json";
   const gridFrame = document.getElementById('gridFrame');
   const acaFrame  = document.getElementById('acaFrame');
   const mapFrame  = document.getElementById('mapFrame');
@@ -202,10 +202,9 @@ def main():
     ap.add_argument("--iata", required=True, help="Target airport IATA code (e.g., LAX)")
     ap.add_argument("--wsize", type=float, required=True, help="Weight for total passengers (e.g., 85)")
     ap.add_argument("--wgrowth", type=float, required=True, help="Weight for growth (e.g., 5)")
-    # for the “Run new build” link; defaults to the current repo if running in Actions
     ap.add_argument("--gh-owner", default=os.environ.get("GITHUB_REPOSITORY", "owner/repo").split("/")[0])
     ap.add_argument("--gh-repo",  default=os.environ.get("GITHUB_REPOSITORY", "owner/repo").split("/")[1] if "/" in os.environ.get("GITHUB_REPOSITORY","") else "repo")
-    ap.add_argument("--workflow-file", default="run-both.yml")  # adjust to your workflow file name if different
+    ap.add_argument("--workflow-file", default="run-both.yml")
     args = ap.parse_args()
 
     iata = args.iata.upper()
@@ -221,8 +220,20 @@ def main():
     with open(os.path.join(DOCS_DIR, "grid.html"), "w", encoding="utf-8") as f:
         f.write(grid_html)
 
-    # 2) ACA table
-    aca_html, _aca_df = build_aca_table_html(iata)
+    # Build competitor annotations
+    competitors = {}
+    sets = grid_res.get("sets", {})
+    for cat, df in [("Passengers", sets.get("total")),
+                    ("Growth", sets.get("growth")),
+                    ("Share", sets.get("share")),
+                    ("Composite", sets.get("composite"))]:
+        if df is None: continue
+        for c in df["iata"].unique():
+            if c == iata: continue
+            competitors.setdefault(c, []).append(cat)
+
+    # 2) ACA table (with competitor annotations)
+    aca_html, _aca_df = build_aca_table_html(iata, competitors=competitors)
     with open(os.path.join(DOCS_DIR, "aca_table.html"), "w", encoding="utf-8") as f:
         f.write(aca_html)
 
@@ -231,7 +242,7 @@ def main():
     fmap = build_map(highlight_iatas=highlight)
     fmap.save(os.path.join(DOCS_DIR, "aca_map.html"))
 
-    # 4) Dashboard (token replacement; no .format())
+    # 4) Dashboard
     actions_url = f"https://github.com/{args.gh_owner}/{args.gh_repo}/actions/workflows/{args.workflow_file}"
     dash_html = (DASHBOARD_TEMPLATE
                  .replace("__TITLE__", f"{iata} — Grid + ACA + Map")
@@ -263,7 +274,7 @@ def main():
         "wgrowth": wgrowth,
         "path": f"runs/{iata}-{int(wsize)}-{int(wgrowth)}-{ts}"
     })
-    manifest["runs"] = manifest["runs"][-100:]  # cap to last 100
+    manifest["runs"] = manifest["runs"][-100:]
     _save_manifest(manifest)
 
     print("Wrote:")
