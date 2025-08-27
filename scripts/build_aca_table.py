@@ -81,7 +81,7 @@ def make_payload(df: pd.DataFrame) -> dict:
         by_region[reg] = level_map
     return {"levels_desc": LEVELS_DESC, "regions": regions, "by_region": by_region}
 
-# --- Competitors (strip Composite, only keep Passengers, Share, Growth) ---
+# --- Competitors (Passengers, Share, Growth only) ---
 def _parse_grid_competitors_from_html(grid_html: str) -> Dict[str, List[str]]:
     soup = BeautifulSoup(grid_html, "lxml")
     rows = soup.select(".container .row")
@@ -91,7 +91,7 @@ def _parse_grid_competitors_from_html(grid_html: str) -> Dict[str, List[str]]:
         if "share of region" in t: return "Share"
         if "growth" in t: return "Growth"
         if "passenger" in t: return "Passengers"
-        return None  # exclude composite
+        return None
 
     comp: Dict[str, List[str]] = {}
     for row in rows:
@@ -169,9 +169,9 @@ def build_aca_table_html(target_iata: Optional[str] = None,
   tbody td {{ padding:6px 8px; border-bottom:1px solid #eee; vertical-align:top; }}
   td.lvl {{ font-weight:700; width:100px; white-space:nowrap; }}
   td.count {{ text-align:right; width:60px; color:#6b7785; }}
-  td.codes code {{ font-family: ui-monospace,SFMono-Regular,Menlo,Consolas,monospace; font-size:12px; background:#f5f7fb; padding:2px 6px; border-radius:6px; margin:2px 4px 2px 0; display:inline-block; }}
-  code.hl {{ outline: 2px solid #E74C3C; outline-offset: 1px; }}
-  code.comp {{ background:#fff3cd; border:1px solid #f1c40f; }}
+  td.codes code {{ font-family: ui-monospace,SFMono-Regular,Menlo,Consolas,monospace; font-size:12px; padding:2px 6px; border-radius:6px; margin:2px 4px 2px 0; display:inline-block; }}
+  code.comp {{ background:#fff3cd; color:#000; border:1px solid #f1c40f; }}
+  code.hl {{ background:#e74c3c; color:#fff; font-size:14px; font-weight:700; }}
   #downloadBtn {{ margin-top:10px; padding:6px 12px; border-radius:6px; border:none; background:#3498db; color:#fff; cursor:pointer; }}
 </style>
 
@@ -234,7 +234,7 @@ def build_aca_table_html(target_iata: Optional[str] = None,
         codes.forEach(c=>{{
           const chip=document.createElement('code'); chip.textContent=c;
           if (c===target) chip.classList.add('hl');
-          if (Array.isArray(COMP[c]) && COMP[c].length) chip.classList.add('comp');
+          else if (Array.isArray(COMP[c]) && COMP[c].length) chip.classList.add('comp');
           tdCodes.appendChild(chip);
         }});
       }} else {{
@@ -251,9 +251,9 @@ def build_aca_table_html(target_iata: Optional[str] = None,
   sel.addEventListener('change', ()=>render(sel.value));
   render(sel.value || regions[0] || '');
 
-  // Export as JPEG
+  // Export as high-res JPEG
   document.getElementById('downloadBtn').addEventListener('click', () => {{
-    html2canvas(document.getElementById('captureArea')).then(canvas => {{
+    html2canvas(document.getElementById('captureArea'), {{ scale: 3 }}).then(canvas => {{
       const link = document.createElement('a');
       link.download = 'aca_table.jpeg';
       link.href = canvas.toDataURL('image/jpeg', 1.0);
