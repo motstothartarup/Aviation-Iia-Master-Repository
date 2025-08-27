@@ -1,8 +1,9 @@
 # scripts/build_map.py
 # ACA Americas map with:
-#  - level badge stacked ABOVE IATA in each label
-#  - optional highlighting (bigger dot + yellow stroke) for a set of IATA codes
+#  - level badge stacked ABOVE IATA in each label (legacy style preserved)
+#  - optional highlighting (bigger dot + outline) for a set of IATA codes
 #  - non-interest airports: no border, no labels, dimmed & smaller
+#  - HIGH-RES JPEG export of the CURRENT VIEW (keeps basemap), hiding UI while capturing
 # build_map(highlight_iatas=None) -> folium.Map
 # If executed as a script, writes docs/aca_map.html.
 
@@ -29,7 +30,7 @@ PALETTE = {
     "Level 5": "#E74C3C",
 }
 
-# Show as a short badge above IATA
+# Show as a short badge above IATA (legacy; we now render "IATA, LEVEL" text, but keep this map)
 LEVEL_BADGE = {
     "Level 1": "1",
     "Level 2": "2",
@@ -169,9 +170,11 @@ def load_coords() -> pd.DataFrame:
 def build_map(highlight_iatas=None) -> folium.Map:
     """
     Return a folium.Map for ACA airports in the Americas.
-    highlight_iatas: optional set/list of IATA codes to emphasize (bigger + yellow stroke + labels).
+    highlight_iatas: optional set/list of IATA codes to emphasize (bigger + outline + labels).
+      - FIRST item in this list = "chosen" airport (RED outline)
+      - Remaining items = competitors (YELLOW outline)
     """
-    # NEW: preserve order (first = chosen), and a set for membership tests
+    # preserve order and provide a set for membership checks
     highlight_list = list(highlight_iatas or [])
     highlight = {str(x).upper() for x in highlight_list}
     chosen = highlight_list[0].upper() if highlight_list else None
@@ -203,7 +206,7 @@ def build_map(highlight_iatas=None) -> folium.Map:
     groups = {lvl: folium.FeatureGroup(name=lvl, show=True).add_to(m) for lvl in LEVELS}
 
     updated = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
-    BUILD_VER = "r1.9-zoomx3+open4.7+yellow-hot+nolabels-cold+no-border-cold+labels-comma-level+exportjpeg"
+    BUILD_VER = "r1.9-zoomx3+open4.7+yellow-hot+nolabels-cold+no-border-cold+labels-comma-level+exportjpeg-mapdiv"
 
     # --- CSS + footer badge + zoom meter + stack styles ---
     badge_html = (
@@ -226,7 +229,8 @@ def build_map(highlight_iatas=None) -> folium.Map:
 
 /* We feed the tooltip HTML already containing .ttxt */
 .leaflet-tooltip.iata-tt .ttxt { display:inline-block; line-height:1.05; }
-/* keep legacy classes harmless */
+
+/* legacy sub-spans suppressed (we now show "IATA, LEVEL" text only) */
 .leaflet-tooltip.iata-tt .lvlchip { display:none; }
 .leaflet-tooltip.iata-tt .iata    { display:none; }
 
@@ -246,7 +250,7 @@ def build_map(highlight_iatas=None) -> folium.Map:
 }
 
 /* Stack list styled like labels (no bg/border/shadow) */
-/* CHANGED: color to black (no grey when stacked) */
+/* IMPORTANT: keep black when stacked (no greying) */
 .iata-stack{
   position:absolute; z-index:9998; pointer-events:none;
   background:transparent; border:0; box-shadow:none;
@@ -256,7 +260,7 @@ def build_map(highlight_iatas=None) -> folium.Map:
 }
 .iata-stack .row{ line-height:1.0; margin: __ROWGAP__px 0; }
 
-/* Legend box under zoom meter (dots already, keep) */
+/* Legend box under zoom meter (DOTS) */
 .legend-box{
   position:absolute; left:12px; top:170px; z-index:9999;
   background:#fff; padding:6px 8px; border-radius:8px;
@@ -268,7 +272,7 @@ def build_map(highlight_iatas=None) -> folium.Map:
 .legend-box .row{ display:flex; align-items:center; gap:6px; margin:3px 0; }
 .legend-box .dot{ width:10px; height:10px; border-radius:50%; display:inline-block; border:1px solid rgba(0,0,0,.25); }
 
-/* NEW: download button */
+/* Download button */
 #downloadBtn{
   position:absolute; top:12px; left:12px; z-index:9999;
   background:#3498db; color:#fff; border:none; border-radius:6px;
@@ -278,31 +282,8 @@ def build_map(highlight_iatas=None) -> folium.Map:
 <div class="last-updated">Last updated: __UPDATED__ • __VER__</div>
 <div id="zoomMeter" class="zoom-meter">Zoom: --%</div>
 <button id="downloadBtn" type="button">Download as JPEG</button>
+<!-- html2canvas for export -->
 <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
-<script>
-  // High-res JPEG export of current map view; hides UI elements temporarily.
-  (function(){
-    function el(q){ return document.querySelector(q); }
-    function doExport(){
-      const hideElems = [
-        el('.leaflet-control-layers'),
-        el('.leaflet-control-zoom'),
-        el('.last-updated'),
-        el('#zoomMeter')
-      ];
-      hideElems.forEach(e=>{ if(e) e.dataset._prevDisplay = e.style.display; if(e) e.style.display='none'; });
-      html2canvas(document.querySelector('.leaflet-container'), { scale: 3 }).then(canvas=>{
-        const a = document.createElement('a');
-        a.download = 'aca_map.jpeg';
-        a.href = canvas.toDataURL('image/jpeg', 1.0);
-        a.click();
-        hideElems.forEach(e=>{ if(e) e.style.display = (e && e.dataset._prevDisplay) || ''; });
-      });
-    }
-    var btn = document.getElementById('downloadBtn');
-    if (btn) btn.addEventListener('click', doExport);
-  })();
-</script>
 """
         .replace("__UPDATED__", updated)
         .replace("__VER__", BUILD_VER)
@@ -333,14 +314,14 @@ def build_map(highlight_iatas=None) -> folium.Map:
 
         # Determine highlight type
         if chosen and r.iata == chosen:
-            # CHANGED: chosen airport gets RED outline
+            # CHOSEN: RED outline
             radius = base_radius * 1.5
             stroke_color = "#E74C3C"     # red outline
             stroke_weight = max(STROKE, 3)
             fill_opacity = 0.95
             add_label = True
         elif r.iata in highlight:
-            # Other competitors: YELLOW outline (as table)
+            # Other competitors: YELLOW outline
             radius = base_radius * 1.5
             stroke_color = "#F1C40F"     # yellow outline
             stroke_weight = max(STROKE, 3)
@@ -372,7 +353,7 @@ def build_map(highlight_iatas=None) -> folium.Map:
             ),
         )
 
-        # CHANGED: label content -> "IATA, LEVELBADGE" (single line), for chosen + competitors
+        # Label content -> "IATA, LEVELBADGE" (single line), for chosen + competitors only
         if add_label:
             lvl_badge = LEVEL_BADGE.get(r.aca_level, "")
             label_html = f'<div class="ttxt">{r.iata}, {lvl_badge}</div>'
@@ -392,7 +373,7 @@ def build_map(highlight_iatas=None) -> folium.Map:
 
     folium.LayerControl(collapsed=False).add_to(m)
 
-    # --- JS: smooth zoom + zoom meter + position DB + stacks on zoom-out + miles->px scaling ---
+    # --- JS: smooth zoom + zoom meter + position DB + stacks on zoom-out + miles->px scaling + EXPORT ---
     js = r"""
 (function(){
   try {
@@ -481,14 +462,15 @@ def build_map(highlight_iatas=None) -> folium.Map:
           const size = (cls.find(c=>c.startsWith('size-'))||'size-small').slice(5);
           const iata = (cls.find(c=>c.startsWith('tt-'))||'tt-').slice(3);
 
-          // CHANGED: also capture level from text "IATA, LEVEL"
+          // capture level badge from label text "IATA, LEVEL"
           const txt = (el.textContent || '').split(',');
           const level = (txt.length > 1 ? txt[1].trim() : '');
 
-          const R = rect(el.querySelector('.ttxt') || el);
+          const R0 = el.querySelector('.ttxt') || el;
+          const prect = rect(R0);
           items.push({ iata, level, size, el,
             dot:{ lat:latlng.lat, lng:latlng.lng, x:pt.x, y:pt.y },
-            label:{ x:R.x, y:R.y, w:R.w, h:R.h } });
+            label:{ x:prect.x, y:prect.y, w:prect.w, h:prect.h } });
         });
         return items;
       }
@@ -524,7 +506,7 @@ def build_map(highlight_iatas=None) -> folium.Map:
         sorted.forEach(i=>{
           const r = document.createElement('div');
           r.className = 'row';
-          // CHANGED: include level "IATA, LEVEL"
+          // ALWAYS show "IATA, LEVEL"
           r.textContent = items[i].iata + (items[i].level ? (", " + items[i].level) : "");
           div.appendChild(r);
         });
@@ -575,6 +557,32 @@ def build_map(highlight_iatas=None) -> folium.Map:
       if (map.whenReady) map.whenReady(updateAll);
       map.on('zoomend moveend overlayadd overlayremove layeradd layerremove resize', scheduleUpdate);
       updateAll();
+
+      // --------- HIGH-RES JPEG EXPORT (capture the WHOLE map div so basemap is included) ---------
+      (function setupExport(){
+        const btn = document.getElementById('downloadBtn');
+        if (!btn) return;
+        btn.addEventListener('click', () => {
+          const hideElems = [
+            document.querySelector('.leaflet-control-layers'),
+            document.querySelector('.leaflet-control-zoom'),
+            document.querySelector('.last-updated'),
+            document.getElementById('zoomMeter'),
+            btn
+          ];
+          hideElems.forEach(e=>{ if(e){ e.dataset._prevDisplay = e.style.display; e.style.display='none'; }});
+          const mapDiv = document.getElementById(MAP_NAME); // THIS captures tiles + overlays
+          if (!mapDiv) return;
+          html2canvas(mapDiv, { scale: 3 }).then(canvas => {
+            const link = document.createElement('a');
+            link.download = 'aca_map.jpeg';
+            link.href = canvas.toDataURL('image/jpeg', 1.0);
+            link.click();
+            hideElems.forEach(e=>{ if(e){ e.style.display = e.dataset._prevDisplay || ''; }});
+          });
+        });
+      })();
+
     }
   } catch (err) {
     console.error("[ACA] init failed:", err);
