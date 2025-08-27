@@ -1,11 +1,4 @@
 # scripts/build_aca_table.py
-# Library-style builder: scrape ACA, build region board HTML, return html + df.
-# Enhancements:
-# - Optionally read competitors from run_all via `competitors` dict.
-# - If not provided, will parse docs/grid.html to extract top-5 competitors per category
-#   (Passengers, Growth, Share, Composite) and annotate table entries as plain text tags.
-# - Adds yellow highlight to competitor chips and appends % deltas from Grid to each tag.
-
 import io
 import os
 import json
@@ -17,7 +10,6 @@ import requests
 from bs4 import BeautifulSoup
 
 LEVELS_DESC = ['Level 5', 'Level 4+', 'Level 4', 'Level 3+', 'Level 3', 'Level 2', 'Level 1']
-
 GRID_DEFAULT_PATH = os.path.join("docs", "grid.html")
 
 def fetch_aca_html(timeout: int = 45) -> str:
@@ -29,7 +21,6 @@ def fetch_aca_html(timeout: int = 45) -> str:
     return r.text
 
 def parse_aca_table(html: str) -> pd.DataFrame:
-    """Return dataframe with: iata, airport, country, region, aca_level, region4."""
     soup = BeautifulSoup(html, "lxml")
     dfs = []
     table = soup.select_one(".airports-listview table")
@@ -90,26 +81,18 @@ def make_payload(df: pd.DataFrame) -> dict:
         by_region[reg] = level_map
     return {"levels_desc": LEVELS_DESC, "regions": regions, "by_region": by_region}
 
-# ---------- Pull Top-5 competitors from docs/grid.html if run_all didn't pass any ----------
-
+# --- Competitors (strip Composite, only keep Passengers, Share, Growth) ---
 def _parse_grid_competitors_from_html(grid_html: str) -> Dict[str, List[str]]:
-    """
-    Parse grid.html produced by build_grid.py and extract IATA codes per category,
-    appending the chip's displayed delta (e.g., '+3.2%') to the category tag.
-    Returns a dict: { IATA: ["Passengers +3.2%","Growth -1.1%","Share +0.6%","Composite +2.4%"] }
-    """
     soup = BeautifulSoup(grid_html, "lxml")
     rows = soup.select(".container .row")
 
     def _cat_from_label(txt: str) -> Optional[str]:
         t = " ".join((txt or "").strip().lower().split())
-        if "composite" in t: return "Composite"
         if "share of region" in t: return "Share"
         if "growth" in t: return "Growth"
         if "passenger" in t: return "Passengers"
-        return None
+        return None  # exclude composite
 
-    # Build competitors dict
     comp: Dict[str, List[str]] = {}
     for row in rows:
         cat_el = row.select_one(".cat")
@@ -120,25 +103,19 @@ def _parse_grid_competitors_from_html(grid_html: str) -> Dict[str, List[str]]:
         if not cat:
             continue
 
-        # Walk chips (skip the origin/target chip)
         chips = grid_el.select(".chip")
         for chip in chips:
             classes = chip.get("class", [])
             if "origin" in classes:
                 continue
             code_el = chip.select_one(".code")
-            dev_el = chip.select_one(".dev")
             if not code_el:
                 continue
             iata = code_el.get_text(strip=True).upper()
-            delta = (dev_el.get_text(strip=True) if dev_el else "").strip()
-            # Format the tag *with* delta if present (keeps API as List[str])
-            tag = f"{cat} {delta}" if delta else cat
             if iata and len(iata) <= 4:
                 comp.setdefault(iata, [])
-                if tag not in comp[iata]:
-                    comp[iata].append(tag)
-
+                if cat not in comp[iata]:
+                    comp[iata].append(cat)
     return comp
 
 def _discover_competitors_from_grid(grid_html_path: str = GRID_DEFAULT_PATH) -> Dict[str, List[str]]:
@@ -151,26 +128,15 @@ def _discover_competitors_from_grid(grid_html_path: str = GRID_DEFAULT_PATH) -> 
     except Exception:
         return {}
 
-# ---------- /NEW ----------
-
+# --- Main HTML builder ---
 def build_aca_table_html(target_iata: Optional[str] = None,
                          competitors: Optional[Dict[str, List[str]]] = None,
                          grid_html_path: str = GRID_DEFAULT_PATH) -> tuple[str, pd.DataFrame]:
-    """
-    Return (html, aca_df). If target_iata is provided, default to its region and highlight it.
 
-    competitors: optional dict { IATA: [ "Passengers +3.2%", "Growth -1.1%", ... ] }.
-                 If None or empty, this function will parse docs/grid.html to extract
-                 top-5 competitors per category automatically (tags already include deltas).
-
-    grid_html_path: path to the grid HTML file (default docs/grid.html).
-    """
-    # 1) Scrape ACA
     html = fetch_aca_html()
     df = parse_aca_table(html)
     payload = make_payload(df)
 
-    # 2) Competitors: prefer provided dict; otherwise derive from grid.html
     comp_dict = competitors or {}
     if not comp_dict:
         comp_dict = _discover_competitors_from_grid(grid_html_path)
@@ -179,7 +145,6 @@ def build_aca_table_html(target_iata: Optional[str] = None,
     data_json = json.dumps(payload, separators=(",", ":"))
     competitors_json = json.dumps(comp_dict, separators=(",", ":"))
 
-    # Determine default region and highlight
     target_iata = (target_iata or "").upper()
     if target_iata and (df["iata"] == target_iata).any():
         default_region = df.loc[df["iata"] == target_iata, "region4"].iloc[0]
@@ -193,27 +158,25 @@ def build_aca_table_html(target_iata: Optional[str] = None,
 <meta http-equiv="Pragma" content="no-cache"/>
 <meta http-equiv="Expires" content="0"/>
 <style>
-  :root {{ --card-bg:#fff; --ink:#39424e; --muted:#6b7785; --border:#e6e8ec; }}
-  body {{ margin:0; padding:24px; font:16px/1.45 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Arial,sans-serif; color:var(--ink); background:#f6f8fb; }}
+  body {{ margin:0; padding:24px; font:14px/1.4 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Arial,sans-serif; background:#f6f8fb; }}
   .wrap {{ max-width:1100px; margin:0 auto; }}
-  .card {{ background:var(--card-bg); border-radius:12px; box-shadow:0 4px 20px rgba(0,0,0,.08); padding:20px 20px; }}
-  h1 {{ margin:0 0 12px 0; font-size:22px; }}
+  .card {{ background:#fff; border-radius:12px; box-shadow:0 4px 20px rgba(0,0,0,.08); padding:20px; }}
+  h1 {{ margin:0 0 12px 0; font-size:20px; }}
   .row {{ display:flex; gap:16px; align-items:center; flex-wrap:wrap; }}
-  .muted {{ color:var(--muted); font-size:13px; }}
-  select {{ font:14px/1.2 inherit; padding:6px 10px; border-radius:8px; border:1px solid var(--border); background:#fff; }}
-  table {{ width:100%; border-collapse:separate; border-spacing:0; margin-top:14px; font-size:14px; }}
-  thead th {{ text-align:left; font-weight:600; padding:10px 12px; border-bottom:1px solid var(--border); background:#fafbfc; position:sticky; top:0; }}
-  tbody td {{ padding:10px 12px; border-bottom:1px solid var(--border); vertical-align:top; }}
-  td.lvl {{ font-weight:700; width:110px; white-space:nowrap; }}
-  td.count {{ text-align:right; width:80px; color:var(--muted); }}
-  td.codes code {{ font-family: ui-monospace,SFMono-Regular,Menlo,Consolas,monospace; font-size:13px; background:#f5f7fb; padding:2px 6px; border-radius:6px; margin:2px 6px 2px 0; display:inline-block; }}
+  .muted {{ color:#6b7785; font-size:12px; }}
+  table {{ width:100%; border-collapse:collapse; margin-top:14px; font-size:13px; }}
+  thead th {{ text-align:left; font-weight:600; padding:6px 8px; border-bottom:1px solid #ddd; background:#fafbfc; }}
+  tbody td {{ padding:6px 8px; border-bottom:1px solid #eee; vertical-align:top; }}
+  td.lvl {{ font-weight:700; width:100px; white-space:nowrap; }}
+  td.count {{ text-align:right; width:60px; color:#6b7785; }}
+  td.codes code {{ font-family: ui-monospace,SFMono-Regular,Menlo,Consolas,monospace; font-size:12px; background:#f5f7fb; padding:2px 6px; border-radius:6px; margin:2px 4px 2px 0; display:inline-block; }}
   code.hl {{ outline: 2px solid #E74C3C; outline-offset: 1px; }}
-  /* NEW: highlight competitor chips */
-  td.codes code.comp {{ background:#fff3cd; border:1px solid #f1c40f; }}
+  code.comp {{ background:#fff3cd; border:1px solid #f1c40f; }}
+  #downloadBtn {{ margin-top:10px; padding:6px 12px; border-radius:6px; border:none; background:#3498db; color:#fff; cursor:pointer; }}
 </style>
 
 <div class="wrap">
-  <div class="card">
+  <div class="card" id="captureArea">
     <div class="row">
       <h1>ACA Airports by Region</h1>
       <div class="muted">Last updated: {updated}</div>
@@ -223,7 +186,7 @@ def build_aca_table_html(target_iata: Optional[str] = None,
       <select id="regionSelect" aria-label="Choose region"></select>
     </div>
 
-    <table id="acaTable" aria-live="polite">
+    <table id="acaTable">
       <thead>
         <tr>
           <th>ACA Level</th>
@@ -233,14 +196,11 @@ def build_aca_table_html(target_iata: Optional[str] = None,
       </thead>
       <tbody></tbody>
     </table>
-
-    <div class="muted" style="margin-top:10px">
-      Codes are IATA; levels sorted 5 → 1.
-      Competitors from the Grid are highlighted and show category deltas in brackets.
-    </div>
   </div>
+  <button id="downloadBtn">Download as JPEG</button>
 </div>
 
+<script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
 <script id="aca-data" type="application/json">{data_json}</script>
 <script id="competitor-data" type="application/json">{competitors_json}</script>
 <script>
@@ -259,15 +219,6 @@ def build_aca_table_html(target_iata: Optional[str] = None,
   regions.forEach(r=>sel.appendChild(option(r,r)));
   if (regions.includes(defaultRegion)) sel.value = defaultRegion;
 
-  function labelWithTags(iata){{
-    let label = iata;
-    const tags = COMP[iata];
-    if (Array.isArray(tags) && tags.length) {{
-      label += " [" + tags.join(", ") + "]";
-    }}
-    return label;
-  }}
-
   function render(region){{
     tbody.innerHTML='';
     let total=0;
@@ -281,9 +232,9 @@ def build_aca_table_html(target_iata: Optional[str] = None,
       const tdCount=document.createElement('td'); tdCount.className='count'; tdCount.textContent=String(codes.length);
       if(codes.length){{
         codes.forEach(c=>{{
-          const chip=document.createElement('code'); chip.textContent=labelWithTags(c);
+          const chip=document.createElement('code'); chip.textContent=c;
           if (c===target) chip.classList.add('hl');
-          if (Array.isArray(COMP[c]) && COMP[c].length) chip.classList.add('comp');  // NEW: yellow highlight
+          if (Array.isArray(COMP[c]) && COMP[c].length) chip.classList.add('comp');
           tdCodes.appendChild(chip);
         }});
       }} else {{
@@ -299,6 +250,16 @@ def build_aca_table_html(target_iata: Optional[str] = None,
 
   sel.addEventListener('change', ()=>render(sel.value));
   render(sel.value || regions[0] || '');
+
+  // Export as JPEG
+  document.getElementById('downloadBtn').addEventListener('click', () => {{
+    html2canvas(document.getElementById('captureArea')).then(canvas => {{
+      const link = document.createElement('a');
+      link.download = 'aca_table.jpeg';
+      link.href = canvas.toDataURL('image/jpeg', 1.0);
+      link.click();
+    }});
+  }});
 }})();
 </script>
 """
