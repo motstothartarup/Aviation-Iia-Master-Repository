@@ -166,7 +166,10 @@ def _nearest_sets(df, iata, w_size, w_growth, w_share, topn=5):
     r4 = cand.assign(score=(w_size*size_sim + w_growth*growth_sim + w_share*share_sim)) \
              .sort_values("score", ascending=False).head(topn)
     sets = {"total": r1, "growth": r2, "share": r3, "composite": r4}
-    union = {iata} | set(r1["iata"]) | set(r2["iata"]) | set(r3["iata"]) | set(r4["iata"])
+
+    # *** CHANGE THIS LINE ONLY ***
+    union = {iata} | set(r1["iata"])   # was: {iata} | set(r1["iata"]) | set(r2["iata"]) | set(r3["iata"]) | set(r4["iata"])
+
     return t, sets, union
 
 def build_grid(excel_path: str, iata: str, wsize: float, wgrowth: float, out_html: str | None = None):
