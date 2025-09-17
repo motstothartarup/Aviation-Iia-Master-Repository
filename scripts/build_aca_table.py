@@ -81,7 +81,7 @@ def make_payload(df: pd.DataFrame) -> dict:
         by_region[reg] = level_map
     return {"levels_desc": LEVELS_DESC, "regions": regions, "by_region": by_region}
 
-# --- Competitors (Passengers, Share, Growth only) ---
+# --- Competitors (Passengers & Share ONLY; Growth excluded) ---
 def _parse_grid_competitors_from_html(grid_html: str) -> Dict[str, List[str]]:
     soup = BeautifulSoup(grid_html, "lxml")
     rows = soup.select(".container .row")
@@ -94,13 +94,16 @@ def _parse_grid_competitors_from_html(grid_html: str) -> Dict[str, List[str]]:
         return None
 
     comp: Dict[str, List[str]] = {}
+    allowed = {"Share", "Passengers"}  # <— Only keep these categories
+
     for row in rows:
         cat_el = row.select_one(".cat")
         grid_el = row.select_one(".grid")
         if not cat_el or not grid_el:
             continue
         cat = _cat_from_label(cat_el.get_text())
-        if not cat:
+        if not cat or cat not in allowed:
+            # Skip rows that aren't 'Share' or 'Passengers' (i.e., drop 'Growth')
             continue
 
         chips = grid_el.select(".chip")
