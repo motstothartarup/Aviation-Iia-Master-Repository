@@ -97,6 +97,13 @@
       "wsize": 85.0,
       "wgrowth": 5.0,
       "path": "runs/LAX-85-5-1756329118"
+    },
+    {
+      "ts": 1758131500,
+      "iata": "LAX",
+      "wsize": 95.0,
+      "wgrowth": 2.5,
+      "path": "runs/LAX-95-2-1758131500"
     }
   ]
 }
