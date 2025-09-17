@@ -1,0 +1,52 @@
+<!doctype html><meta charset="utf-8"><title>Competitor Grid</title>
+
+<style>
+:root{
+  --gap:10px; --radius:14px; --ink:#111827; --muted:#6b7280; --border:#e5e7eb; --chipbg:#f6f8fa;
+}
+.container{max-width:1100px;margin:14px auto 18px auto;padding:0 10px;font-family:Inter,system-ui,Arial}
+.header h3{margin:0 0 4px 0}
+.header .meta{color:var(--muted)}
+.row{display:grid;grid-template-columns:240px 1fr;column-gap:16px;align-items:start;margin:10px 0}
+.cat{font-weight:800;line-height:1.2}
+.cat .sub{display:block;color:var(--muted);font-weight:500;font-size:12px;margin-top:2px}
+.grid{display:grid;grid-template-columns:repeat(5,minmax(84px,1fr));gap:var(--gap)} /* 5 columns */
+.chip{
+  display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:56px;
+  padding:8px 10px;border:1px solid #9aa2af;border-radius:var(--radius);background:var(--chipbg);
+  color:var(--ink);text-align:center; position:relative;
+}
+.chip .code{font-weight:800;line-height:1.05}
+.chip .dev{font-size:11px;color:var(--muted);line-height:1.05;margin-top:2px}
+.chip.origin{box-shadow:0 0 0 2px rgba(231,76,60,.22) inset;border-color:#E74C3C}
+.dot{ width:10px;height:10px;border-radius:999px;position:absolute;top:8px;left:8px; }
+</style>
+
+<div class="container">
+  
+    <div class="header">
+      <h3>LAX — Los Angeles International Airport</h3>
+      <div class="meta">State: CA · FAA: Western-Pacific ·
+      Pax (total): 76,588,028 · Share of region: 19.65%</div>
+    </div>
+
+  <div class="row">
+    <div class="cat">Total passengers (int’l + dom)<span class="sub">Target — LAX: 76,588,028</span></div>
+    <div class="grid"><div class='chip' data-region='Great Lakes' style='border-color:#00838F;'><span class='dot' style='background:#00838F' aria-hidden='true'></span><span class='code'>ORD</span><span class='dev'>+4.5%</span></div><div class='chip' data-region='Northwest Mountain' style='border-color:#10B981;'><span class='dot' style='background:#10B981' aria-hidden='true'></span><span class='code'>DEN</span><span class='dev'>+7.5%</span></div><div class='chip' data-region='Southwest' style='border-color:#F59E0B;'><span class='dot' style='background:#F59E0B' aria-hidden='true'></span><span class='code'>DFW</span><span class='dev'>+14.7%</span></div><div class='chip' data-region='Eastern' style='border-color:#7E57C2;'><span class='dot' style='background:#7E57C2' aria-hidden='true'></span><span class='code'>JFK</span><span class='dev'>-17.4%</span></div><div class='chip' data-region='Southern' style='border-color:#E83F2E;'><span class='dot' style='background:#E83F2E' aria-hidden='true'></span><span class='code'>CLT</span><span class='dev'>-23.2%</span></div></div>
+  </div>
+
+  <div class="row">
+    <div class="cat">Growth 2023→2024<span class="sub">Target — LAX: +0.1%</span></div>
+    <div class="grid"><div class='chip' data-region='Southwest' style='border-color:#F59E0B;'><span class='dot' style='background:#F59E0B' aria-hidden='true'></span><span class='code'>DAL</span><span class='dev'>-1.8%</span></div><div class='chip' data-region='Western-Pacific' style='border-color:#EF4444;'><span class='dot' style='background:#EF4444' aria-hidden='true'></span><span class='code'>BUR</span><span class='dev'>-1.8%</span></div><div class='chip' data-region='Southern' style='border-color:#E83F2E;'><span class='dot' style='background:#E83F2E' aria-hidden='true'></span><span class='code'>CHS</span><span class='dev'>-1.8%</span></div><div class='chip' data-region='Eastern' style='border-color:#7E57C2;'><span class='dot' style='background:#7E57C2' aria-hidden='true'></span><span class='code'>ORF</span><span class='dev'>-1.8%</span></div><div class='chip' data-region='Northwest Mountain' style='border-color:#10B981;'><span class='dot' style='background:#10B981' aria-hidden='true'></span><span class='code'>BOI</span><span class='dev'>-1.8%</span></div></div>
+  </div>
+
+  <div class="row">
+    <div class="cat">Share of region (airport ÷ FAA region)<span class="sub">Target — LAX: 19.65%</span></div>
+    <div class="grid"><div class='chip' data-region='Central' style='border-color:#6D6E71;'><span class='dot' style='background:#6D6E71' aria-hidden='true'></span><span class='code'>STL</span><span class='dev'>-1.2%</span></div><div class='chip' data-region='Southwest' style='border-color:#F59E0B;'><span class='dot' style='background:#F59E0B' aria-hidden='true'></span><span class='code'>IAH</span><span class='dev'>+1.8%</span></div><div class='chip' data-region='Unknown' style='border-color:#9aa2af;'><span class='dot' style='background:#9aa2af' aria-hidden='true'></span><span class='code'>HSV</span><span class='dev'>+3.7%</span></div><div class='chip' data-region='Eastern' style='border-color:#7E57C2;'><span class='dot' style='background:#7E57C2' aria-hidden='true'></span><span class='code'>JFK</span><span class='dev'>+7.7%</span></div><div class='chip' data-region='Alaskan' style='border-color:#2E7D32;'><span class='dot' style='background:#2E7D32' aria-hidden='true'></span><span class='code'>FAI</span><span class='dev'>-9.9%</span></div></div>
+  </div>
+
+  <div class="row">
+    <div class="cat">Closest by total passengers<span class="sub">Top 5 most similar throughput</span></div>
+    <div class="grid"><div class='chip' data-region='Great Lakes' style='border-color:#00838F;'><span class='dot' style='background:#00838F' aria-hidden='true'></span><span class='code'>ORD</span><span class='dev'>+4.5%</span></div><div class='chip' data-region='Northwest Mountain' style='border-color:#10B981;'><span class='dot' style='background:#10B981' aria-hidden='true'></span><span class='code'>DEN</span><span class='dev'>+7.5%</span></div><div class='chip' data-region='Southwest' style='border-color:#F59E0B;'><span class='dot' style='background:#F59E0B' aria-hidden='true'></span><span class='code'>DFW</span><span class='dev'>+14.7%</span></div><div class='chip' data-region='Eastern' style='border-color:#7E57C2;'><span class='dot' style='background:#7E57C2' aria-hidden='true'></span><span class='code'>JFK</span><span class='dev'>-17.4%</span></div><div class='chip' data-region='Southern' style='border-color:#E83F2E;'><span class='dot' style='background:#E83F2E' aria-hidden='true'></span><span class='code'>CLT</span><span class='dev'>-23.2%</span></div></div>
+  </div>
+</div>
