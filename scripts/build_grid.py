@@ -141,10 +141,17 @@ def _grid_html(rows, metric_col, target_val, pct_metric, origin_iata):
 
 def _nearest_sets(df, iata, w_size, w_growth, w_share, topn=5):
     t = df.loc[df["iata"]==iata].iloc[0]
-    # total
-    cand = df[df["iata"]!=iata].copy()
-    r1 = cand.assign(abs_diff_pax=(cand["total_passengers"]-t["total_passengers"]).abs()) \
-             .sort_values("abs_diff_pax").head(topn)
+
+    # ---- TOTAL: closest by absolute throughput difference, unique per IATA (FIX) ----
+    cand = df[df["iata"] != iata].copy()
+    cand = cand.assign(abs_diff_pax=(cand["total_passengers"] - t["total_passengers"]).abs())
+    r1 = (
+        cand.sort_values(["abs_diff_pax", "total_passengers"], ascending=[True, False])
+            .drop_duplicates(subset=["iata"], keep="first")
+            .head(topn)
+    )
+    # -----------------------------------------------------------------------------
+
     # growth (median fallback)
     g = pd.to_numeric(cand["yoy_growth_pct"], errors="coerce")
     g_med = g.median()
@@ -155,7 +162,8 @@ def _nearest_sets(df, iata, w_size, w_growth, w_share, topn=5):
     # share any-region
     r3 = cand.assign(abs_diff_share=(cand["share_of_region_pct"]-t["share_of_region_pct"]).abs()) \
              .sort_values("abs_diff_share").head(topn)
-    # composite
+
+    # composite (left intact for reference; not used for map or bottom grid)
     s = max(1e-9, w_size+w_growth+w_share)
     w_size, w_growth, w_share = w_size/s, w_growth/s, w_share/s
     size_sim = 1 - ((np.log1p(cand["total_passengers"]) - np.log1p(t["total_passengers"])).abs()
@@ -165,11 +173,11 @@ def _nearest_sets(df, iata, w_size, w_growth, w_share, topn=5):
     share_sim = 1 - (diff/(diff.max()+1e-9))
     r4 = cand.assign(score=(w_size*size_sim + w_growth*growth_sim + w_share*share_sim)) \
              .sort_values("score", ascending=False).head(topn)
+
     sets = {"total": r1, "growth": r2, "share": r3, "composite": r4}
 
-    # *** CHANGE THIS LINE ONLY ***
-    union = {iata} | set(r1["iata"])   # was: {iata} | set(r1["iata"]) | set(r2["iata"]) | set(r3["iata"]) | set(r4["iata"])
-
+    # Map list should reflect only the 'closest by throughput' set.
+    union = {iata} | set(r1["iata"])
     return t, sets, union
 
 def build_grid(excel_path: str, iata: str, wsize: float, wgrowth: float, out_html: str | None = None):
@@ -186,9 +194,10 @@ def build_grid(excel_path: str, iata: str, wsize: float, wgrowth: float, out_htm
     total  = _grid_html(r1, "total_passengers",      target["total_passengers"],      False, iata)
     growth = _grid_html(r2, "yoy_growth_pct",        growth_target,                   True,  iata)
     share  = _grid_html(r3, "share_of_region_pct",   target["share_of_region_pct"],   True,  iata)
-    comp   = _grid_html(r4, "total_passengers",      target["total_passengers"],      False, iata)
+    # Use r1 for the bottom grid so it mirrors the “closest by throughput” list (FIX)
+    comp   = _grid_html(r1, "total_passengers",      target["total_passengers"],      False, iata)
 
-    # Reference values to show under each header for the TARGET airport
+    # Reference values for TARGET airport
     ref_total = f"{target['iata']}: {_fmt_int(target['total_passengers'])}"
     ref_growth = f"{target['iata']}: {_fmt_pct(growth_target, signed=True)}"
     ref_share = f"{target['iata']}: {_fmt_pct(target['share_of_region_pct'], signed=False, decimals=2)}"
@@ -221,7 +230,7 @@ def build_grid(excel_path: str, iata: str, wsize: float, wgrowth: float, out_htm
   </div>
 
   <div class="row">
-    <div class="cat">Composite (weights: {wsize:.0f}/{wgrowth:.0f}/{wshare:.0f})<span class="sub">Top 5 closest overall</span></div>
+    <div class="cat">Closest by total passengers<span class="sub">Top 5 most similar throughput</span></div>
     <div class="grid">{comp}</div>
   </div>
 </div>"""
