@@ -1,0 +1,47 @@
+<!doctype html><meta charset="utf-8"><title>Competitor Grid</title>
+
+<style>
+:root{
+  --gap:10px; --radius:14px; --ink:#111827; --muted:#6b7280; --border:#e5e7eb; --chipbg:#f6f8fa;
+}
+.container{max-width:1100px;margin:14px auto 18px auto;padding:0 10px;font-family:Inter,system-ui,Arial}
+.header h3{margin:0 0 4px 0}
+.header .meta{color:var(--muted)}
+.row{display:grid;grid-template-columns:240px 1fr;column-gap:16px;align-items:start;margin:10px 0}
+.cat{font-weight:800;line-height:1.2}
+.cat .sub{display:block;color:var(--muted);font-weight:500;font-size:12px;margin-top:2px}
+.grid{display:grid;grid-template-columns:repeat(7,minmax(84px,1fr));gap:var(--gap)} /* 7 columns */
+.chip{
+  display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:56px;
+  padding:8px 10px;border:1px solid #9aa2af;border-radius:var(--radius);background:var(--chipbg);
+  color:var(--ink);text-align:center; position:relative;
+}
+.chip .code{font-weight:800;line-height:1.05}
+.chip .dev{font-size:11px;color:var(--muted);line-height:1.05;margin-top:2px}
+.chip.origin{box-shadow:0 0 0 2px rgba(231,76,60,.22) inset;border-color:#E74C3C}
+.dot{ width:10px;height:10px;border-radius:999px;position:absolute;top:8px;left:8px; }
+</style>
+
+<div class="container">
+  
+    <div class="header">
+      <h3>LAX — Los Angeles International Airport</h3>
+      <div class="meta">State: CA · Region: West ·
+      Pax (total): 76,588,028 · Share of region: 12.59%</div>
+    </div>
+
+  <div class="row">
+    <div class="cat">Total passengers (int’l + dom)<span class="sub">Target — LAX: 76,588,028</span></div>
+    <div class="grid"><div class='chip' data-region='Midwest' style='border-color:#10B981;'><span class='dot' style='background:#10B981' aria-hidden='true'></span><span class='code'>ORD</span><span class='dev'>+4.5%</span></div><div class='chip' data-region='West' style='border-color:#1957A6;'><span class='dot' style='background:#1957A6' aria-hidden='true'></span><span class='code'>DEN</span><span class='dev'>+7.5%</span></div><div class='chip' data-region='South' style='border-color:#F59E0B;'><span class='dot' style='background:#F59E0B' aria-hidden='true'></span><span class='code'>DFW</span><span class='dev'>+14.7%</span></div><div class='chip' data-region='Northeast' style='border-color:#7E57C2;'><span class='dot' style='background:#7E57C2' aria-hidden='true'></span><span class='code'>JFK</span><span class='dev'>-17.4%</span></div><div class='chip' data-region='South' style='border-color:#F59E0B;'><span class='dot' style='background:#F59E0B' aria-hidden='true'></span><span class='code'>CLT</span><span class='dev'>-23.2%</span></div><div class='chip' data-region='West' style='border-color:#1957A6;'><span class='dot' style='background:#1957A6' aria-hidden='true'></span><span class='code'>LAS</span><span class='dev'>-23.6%</span></div><div class='chip' data-region='South' style='border-color:#F59E0B;'><span class='dot' style='background:#F59E0B' aria-hidden='true'></span><span class='code'>MCO</span><span class='dev'>-25.3%</span></div></div>
+  </div>
+
+  <div class="row">
+    <div class="cat">Share of region (airport ÷ 4-region bucket)<span class="sub">Target — LAX: 12.59%</span></div>
+    <div class="grid"><div class='chip' data-region='Northeast' style='border-color:#7E57C2;'><span class='dot' style='background:#7E57C2' aria-hidden='true'></span><span class='code'>LGA</span><span class='dev'>-0.5%</span></div><div class='chip' data-region='Midwest' style='border-color:#10B981;'><span class='dot' style='background:#10B981' aria-hidden='true'></span><span class='code'>DTW</span><span class='dev'>-5.6%</span></div><div class='chip' data-region='South' style='border-color:#F59E0B;'><span class='dot' style='background:#F59E0B' aria-hidden='true'></span><span class='code'>ATL</span><span class='dev'>+6.5%</span></div><div class='chip' data-region='Midwest' style='border-color:#10B981;'><span class='dot' style='background:#10B981' aria-hidden='true'></span><span class='code'>MSP</span><span class='dev'>+6.5%</span></div><div class='chip' data-region='West' style='border-color:#1957A6;'><span class='dot' style='background:#1957A6' aria-hidden='true'></span><span class='code'>DEN</span><span class='dev'>+7.5%</span></div><div class='chip' data-region='Northeast' style='border-color:#7E57C2;'><span class='dot' style='background:#7E57C2' aria-hidden='true'></span><span class='code'>PHL</span><span class='dev'>-8.3%</span></div><div class='chip' data-region='South' style='border-color:#F59E0B;'><span class='dot' style='background:#F59E0B' aria-hidden='true'></span><span class='code'>DFW</span><span class='dev'>-13.4%</span></div></div>
+  </div>
+
+  <div class="row">
+    <div class="cat">Composite (size ⊕ share)<span class="sub">Weights: 85/15</span></div>
+    <div class="grid"><div class='chip' data-region='West' style='border-color:#1957A6;'><span class='dot' style='background:#1957A6' aria-hidden='true'></span><span class='code'>DEN</span><span class='dev'>+7.5%</span></div><div class='chip' data-region='South' style='border-color:#F59E0B;'><span class='dot' style='background:#F59E0B' aria-hidden='true'></span><span class='code'>DFW</span><span class='dev'>+14.7%</span></div><div class='chip' data-region='South' style='border-color:#F59E0B;'><span class='dot' style='background:#F59E0B' aria-hidden='true'></span><span class='code'>ATL</span><span class='dev'>+41.1%</span></div><div class='chip' data-region='West' style='border-color:#1957A6;'><span class='dot' style='background:#1957A6' aria-hidden='true'></span><span class='code'>LAS</span><span class='dev'>-23.6%</span></div><div class='chip' data-region='South' style='border-color:#F59E0B;'><span class='dot' style='background:#F59E0B' aria-hidden='true'></span><span class='code'>CLT</span><span class='dev'>-23.2%</span></div><div class='chip' data-region='South' style='border-color:#F59E0B;'><span class='dot' style='background:#F59E0B' aria-hidden='true'></span><span class='code'>MCO</span><span class='dev'>-25.3%</span></div><div class='chip' data-region='West' style='border-color:#1957A6;'><span class='dot' style='background:#1957A6' aria-hidden='true'></span><span class='code'>SEA</span><span class='dev'>-31.3%</span></div></div>
+  </div>
+</div>
