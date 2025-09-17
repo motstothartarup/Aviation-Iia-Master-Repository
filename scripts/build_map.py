@@ -70,6 +70,9 @@ STACK_ROW_GAP_PX = 6
 OUT_DIR = "docs"
 OUT_FILE = os.path.join(OUT_DIR, "aca_map.html")
 
+# NEW: path to the grid we’ll parse when highlight_iatas isn’t provided
+GRID_DEFAULT_PATH = os.path.join("docs", "grid.html")
+
 
 # ---------- helpers ----------
 def write_error_page(msg: str) -> None:
@@ -166,6 +169,62 @@ def load_coords() -> pd.DataFrame:
     return df
 
 
+# ----------- NEW: parse the grid to get target + its 7 "Total passengers" neighbors -----------
+def _parse_grid_total7(grid_html_path: str = GRID_DEFAULT_PATH):
+    """
+    Returns (target_iata, total7_list). If parsing fails, returns (None, []).
+    - target_iata is read from <h3>XXX — ...</h3>
+    - total7_list are the 7 IATA codes in the 'Total passengers' row (excluding origin)
+    """
+    try:
+        if not os.path.exists(grid_html_path):
+            return None, []
+        with open(grid_html_path, "r", encoding="utf-8") as f:
+            html = f.read()
+        soup = BeautifulSoup(html, "lxml")
+
+        # target from header
+        h = soup.select_one(".header h3")
+        target = None
+        if h:
+            txt = (h.get_text() or "").strip()
+            # Expect format like "JFK — John F. Kennedy Intl"
+            target = (txt.split("—", 1)[0] or "").strip().upper()
+
+        # find the row whose .cat contains "Total passengers"
+        total_row = None
+        for row in soup.select(".container .row"):
+            cat = row.select_one(".cat")
+            if not cat:
+                continue
+            label = " ".join(cat.get_text(strip=True).lower().split())
+            if "total passengers" in label:
+                total_row = row
+                break
+
+        if not total_row:
+            return target, []
+
+        chips = total_row.select(".grid .chip")
+        out = []
+        for ch in chips:
+            cls = ch.get("class", [])
+            if "origin" in cls:
+                continue
+            code_el = ch.select_one(".code")
+            if not code_el:
+                continue
+            code = code_el.get_text(strip=True).upper()
+            if code and len(code) <= 4:
+                out.append(code)
+            if len(out) >= 7:
+                break
+
+        return target, out
+    except Exception:
+        return None, []
+
+
 # ---------- main ----------
 def build_map(highlight_iatas=None) -> folium.Map:
     """
@@ -174,6 +233,12 @@ def build_map(highlight_iatas=None) -> folium.Map:
       - FIRST item in this list = "chosen" airport (RED outline)
       - Remaining items = competitors (YELLOW outline)
     """
+    # If caller didn't provide highlights, pull the target + 7-total from the grid.
+    if not highlight_iatas:
+        tgt, total7 = _parse_grid_total7(GRID_DEFAULT_PATH)
+        if tgt and total7:
+            highlight_iatas = [tgt] + total7
+
     # preserve order and provide a set for membership checks
     highlight_list = list(highlight_iatas or [])
     highlight = {str(x).upper() for x in highlight_list}
@@ -191,6 +256,13 @@ def build_map(highlight_iatas=None) -> folium.Map:
     if amer.empty:
         raise RuntimeError("No rows for the Americas after joining coordinates.")
 
+    # Filter highlight list to those present on the map (avoid labels with no coordinates)
+    if highlight_list:
+        present = set(amer["iata"])
+        highlight_list = [x for x in highlight_list if x in present]
+        highlight = {x for x in highlight_list}
+        chosen = highlight_list[0] if highlight_list else None
+
     # Center: centroid of all plotted points; zoom: open at 4.7
     center_lat = float(amer["latitude_deg"].mean())
     center_lon = float(amer["longitude_deg"].mean())
@@ -206,7 +278,7 @@ def build_map(highlight_iatas=None) -> folium.Map:
     groups = {lvl: folium.FeatureGroup(name=lvl, show=True).add_to(m) for lvl in LEVELS}
 
     updated = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
-    BUILD_VER = "r1.9-zoomx3+open4.7+yellow-hot+nolabels-cold+no-border-cold+labels-comma-level+exportjpeg-mapdiv"
+    BUILD_VER = "r1.10-grid-total7-link"
 
     # --- CSS + footer badge + zoom meter + stack styles ---
     badge_html = (
@@ -610,7 +682,7 @@ def build_map(highlight_iatas=None) -> folium.Map:
 if __name__ == "__main__":
     os.makedirs(OUT_DIR, exist_ok=True)
     try:
-        fmap = build_map()
+        fmap = build_map()  # will auto-pull [target + total-7] from docs/grid.html
         fmap.save(OUT_FILE)
         print("Wrote", OUT_FILE)
     except Exception as e:
