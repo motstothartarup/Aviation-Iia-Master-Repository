@@ -70,7 +70,7 @@ STACK_ROW_GAP_PX = 6
 OUT_DIR = "docs"
 OUT_FILE = os.path.join(OUT_DIR, "aca_map.html")
 
-# NEW: path to the grid we’ll parse when highlight_iatas isn’t provided
+# NEW: where the grid HTML lives (to derive the Composite 7)
 GRID_DEFAULT_PATH = os.path.join("docs", "grid.html")
 
 
@@ -169,12 +169,12 @@ def load_coords() -> pd.DataFrame:
     return df
 
 
-# ----------- NEW: parse the grid to get target + its 7 "Total passengers" neighbors -----------
-def _parse_grid_total7(grid_html_path: str = GRID_DEFAULT_PATH):
+# ----------- NEW: parse the grid to get target + its 7 "Composite" neighbors -----------
+def _parse_grid_composite7(grid_html_path: str = GRID_DEFAULT_PATH):
     """
-    Returns (target_iata, total7_list). If parsing fails, returns (None, []).
+    Returns (target_iata, composite_list_of_7). If parsing fails, returns (None, []).
     - target_iata is read from <h3>XXX — ...</h3>
-    - total7_list are the 7 IATA codes in the 'Total passengers' row (excluding origin)
+    - composite_list_of_7 are the 7 IATA codes in the 'Composite' row (excluding origin)
     """
     try:
         if not os.path.exists(grid_html_path):
@@ -183,29 +183,28 @@ def _parse_grid_total7(grid_html_path: str = GRID_DEFAULT_PATH):
             html = f.read()
         soup = BeautifulSoup(html, "lxml")
 
-        # target from header
+        # target from header: "<h3>JFK — John F. Kennedy Intl</h3>"
         h = soup.select_one(".header h3")
         target = None
         if h:
             txt = (h.get_text() or "").strip()
-            # Expect format like "JFK — John F. Kennedy Intl"
             target = (txt.split("—", 1)[0] or "").strip().upper()
 
-        # find the row whose .cat contains "Total passengers"
-        total_row = None
+        # find the row whose .cat contains "composite"
+        comp_row = None
         for row in soup.select(".container .row"):
             cat = row.select_one(".cat")
             if not cat:
                 continue
-            label = " ".join(cat.get_text(strip=True).lower().split())
-            if "total passengers" in label:
-                total_row = row
+            label = " ".join((cat.get_text() or "").strip().lower().split())
+            if "composite" in label:
+                comp_row = row
                 break
 
-        if not total_row:
+        if not comp_row:
             return target, []
 
-        chips = total_row.select(".grid .chip")
+        chips = comp_row.select(".grid .chip")
         out = []
         for ch in chips:
             cls = ch.get("class", [])
@@ -233,11 +232,12 @@ def build_map(highlight_iatas=None) -> folium.Map:
       - FIRST item in this list = "chosen" airport (RED outline)
       - Remaining items = competitors (YELLOW outline)
     """
-    # If caller didn't provide highlights, pull the target + 7-total from the grid.
+    # If not provided, derive from the grid's Composite row to mirror the grid/table selection.
     if not highlight_iatas:
-        tgt, total7 = _parse_grid_total7(GRID_DEFAULT_PATH)
-        if tgt and total7:
-            highlight_iatas = [tgt] + total7
+        tgt, comp7 = _parse_grid_composite7(GRID_DEFAULT_PATH)
+        if tgt and comp7:
+            # order matters: first is the chosen (red), rest yellow
+            highlight_iatas = [tgt] + comp7
 
     # preserve order and provide a set for membership checks
     highlight_list = list(highlight_iatas or [])
@@ -278,7 +278,7 @@ def build_map(highlight_iatas=None) -> folium.Map:
     groups = {lvl: folium.FeatureGroup(name=lvl, show=True).add_to(m) for lvl in LEVELS}
 
     updated = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
-    BUILD_VER = "r1.10-grid-total7-link"
+    BUILD_VER = "r1.10-composite7-from-grid"
 
     # --- CSS + footer badge + zoom meter + stack styles ---
     badge_html = (
@@ -682,7 +682,7 @@ def build_map(highlight_iatas=None) -> folium.Map:
 if __name__ == "__main__":
     os.makedirs(OUT_DIR, exist_ok=True)
     try:
-        fmap = build_map()  # will auto-pull [target + total-7] from docs/grid.html
+        fmap = build_map()  # will auto-pull [target + composite-7] from docs/grid.html if not provided
         fmap.save(OUT_FILE)
         print("Wrote", OUT_FILE)
     except Exception as e:
