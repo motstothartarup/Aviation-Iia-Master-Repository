@@ -153,6 +153,13 @@
       "wsize": 85.0,
       "wgrowth": 5.0,
       "path": "runs/LAX-85-5-1758214432"
+    },
+    {
+      "ts": 1763572612,
+      "iata": "JFK",
+      "wsize": 85.0,
+      "wgrowth": 5.0,
+      "path": "runs/JFK-85-5-1763572612"
     }
   ]
 }
