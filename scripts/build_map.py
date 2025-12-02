@@ -1,4 +1,7 @@
 # scripts/build_map.py
+# ACA Americas map focused on target + composite competitors.
+# Target airport gets a red ring, others have transparent outlines.
+# Unscored airports show as "IATA, N/A" in labels.
 
 import io
 import os
@@ -10,6 +13,7 @@ import pandas as pd
 import requests
 from bs4 import BeautifulSoup
 
+# ---------- config ----------
 LEVELS = ['Level 1', 'Level 2', 'Level 3', 'Level 3+', 'Level 4', 'Level 4+', 'Level 5']
 
 PALETTE = {
@@ -36,6 +40,7 @@ RADIUS = {"large": 8, "medium": 7, "small": 6}
 STROKE = 2
 LABEL_GAP_PX = 10
 
+# Zoom tuning
 ZOOM_SNAP = 0.10
 ZOOM_DELTA = 0.75
 WHEEL_PX_PER_ZOOM = 100
@@ -54,6 +59,7 @@ OUT_FILE = os.path.join(OUT_DIR, "aca_map.html")
 GRID_DEFAULT_PATH = os.path.join("docs", "grid.html")
 
 
+# ---------- helpers ----------
 def write_error_page(msg: str) -> None:
     os.makedirs(OUT_DIR, exist_ok=True)
     updated = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
@@ -88,6 +94,7 @@ def fetch_aca_html(timeout: int = 45) -> str:
 
 
 def parse_aca_table(html: str) -> pd.DataFrame:
+    """Return dataframe with: iata, airport, country, region, aca_level, region4."""
     soup = BeautifulSoup(html, "lxml")
     dfs = []
 
@@ -148,7 +155,7 @@ def load_coords() -> pd.DataFrame:
 
 
 def _parse_grid_target_and_composites(grid_html_path: str = GRID_DEFAULT_PATH):
-    """Return (target_iata, [composite competitors])."""
+    """Return (target_iata, [composite competitors]) from docs/grid.html."""
     try:
         if not os.path.exists(grid_html_path):
             return None, []
@@ -159,12 +166,12 @@ def _parse_grid_target_and_composites(grid_html_path: str = GRID_DEFAULT_PATH):
 
         target = None
 
-        # Prefer the origin chip
+        # Prefer origin chip if present
         origin_code = soup.select_one(".chip.origin .code")
         if origin_code:
             target = origin_code.get_text(strip=True).upper()
 
-        # Fallback: header "LAX — ..."
+        # Fallback to header "LAX — ..."
         if not target:
             h = soup.select_one(".header h3")
             if h:
@@ -198,8 +205,16 @@ def _parse_grid_target_and_composites(grid_html_path: str = GRID_DEFAULT_PATH):
         return None, []
 
 
+# ---------- main ----------
 def build_map() -> folium.Map:
-    # Always get target and composite list from grid.html
+    """
+    Return a folium.Map for ACA airports in the Americas.
+
+    Target + composite airports are plotted if possible;
+    the target gets a red ring. If none of those codes can be
+    plotted (e.g. target outside ACA / coords), we fall back to
+    plotting all ACA-Americas airports with no highlight.
+    """
     target_iata, composites = _parse_grid_target_and_composites(GRID_DEFAULT_PATH)
 
     aca_html = fetch_aca_html()
@@ -214,7 +229,7 @@ def build_map() -> folium.Map:
     if amer.empty:
         raise RuntimeError("No rows for the Americas after joining coordinates.")
 
-    # Make sure target + composites all exist (add N/A rows if needed)
+    # Desired codes: target + composites (dedup, preserve order)
     wanted_codes = []
     if target_iata:
         wanted_codes.append(target_iata)
@@ -222,6 +237,8 @@ def build_map() -> folium.Map:
         if c not in wanted_codes:
             wanted_codes.append(c)
 
+    # Try to add missing codes from coords as "Unknown", then
+    # drop any that we still cannot represent.
     if wanted_codes:
         present = set(amer["iata"])
         missing = [c for c in wanted_codes if c not in present]
@@ -242,18 +259,30 @@ def build_map() -> folium.Map:
                 amer = pd.concat([amer, extra[keep_cols]], ignore_index=True, sort=False)
                 amer = amer.drop_duplicates(subset=["iata"], keep="first")
 
+        # Recompute present set and filter wanted_codes to only those we can actually plot
+        present = set(amer["iata"])
+        wanted_codes = [c for c in wanted_codes if c in present]
+
+        # If after filtering nothing remains, clear target so we do not attempt to highlight
+        if not wanted_codes:
+            target_iata = None
+
+    # Build plot_df – if empty for any reason, fall back to amer and clear target
     if wanted_codes:
         plot_df = amer[amer["iata"].isin(wanted_codes)].copy()
     else:
         plot_df = amer.copy()
 
-    # Simple order: target first, then others
+    if plot_df.empty:
+        plot_df = amer.copy()
+        target_iata = None
+
+    # Ordering: if we have a target, keep it first
     if target_iata:
-        plot_df["__order__"] = plot_df["iata"].apply(
-            lambda x: 0 if x == target_iata else 1
-        )
+        plot_df["__order__"] = plot_df["iata"].apply(lambda x: 0 if x == target_iata else 1)
         plot_df = plot_df.sort_values("__order__")
 
+    # Center/zoom
     center_lat = float(plot_df["latitude_deg"].mean())
     center_lon = float(plot_df["longitude_deg"].mean())
 
@@ -270,6 +299,7 @@ def build_map() -> folium.Map:
 
     updated = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
 
+    # CSS, legend, timestamp
     badge_html = (
         r"""
 <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate"/>
@@ -342,7 +372,7 @@ def build_map() -> folium.Map:
     )
     m.get_root().html.add_child(folium.Element(legend_html))
 
-    # Draw all points; give target the red ring
+    # --- dots + labels ---
     for _, r in plot_df.iterrows():
         lat, lon = float(r.latitude_deg), float(r.longitude_deg)
         size_key = r.get("size", "small")
@@ -350,11 +380,11 @@ def build_map() -> folium.Map:
 
         if target_iata and r.iata == target_iata:
             radius = base_radius * 1.7
-            stroke_color = "#E74C3C"
+            stroke_color = "#E74C3C"     # red ring
             stroke_weight = max(STROKE, 3)
         else:
             radius = base_radius * 1.5
-            stroke_color = "rgba(0,0,0,0)"
+            stroke_color = "rgba(0,0,0,0)"  # invisible outline
             stroke_weight = 0
 
         lvl = r.aca_level if r.aca_level in PALETTE else "Unknown"
@@ -380,6 +410,7 @@ def build_map() -> folium.Map:
             ),
         )
 
+        # Label text
         if lvl == "Unknown":
             label_text = f"{r.iata}, N/A"
         else:
@@ -400,7 +431,7 @@ def build_map() -> folium.Map:
 
         dot.add_to(groups[lvl])
 
-    # clustering JS (unchanged except no zoom meter / download)
+    # --- JS: stacking / clustering only (no zoom meter, no download) ---
     js = r"""
 (function(){
   try {
@@ -486,49 +517,35 @@ def build_map() -> folium.Map:
         return items;
       }
 
-      function buildClusters(items, radiusPx){
-        const n = items.length;
-        const parent = Array.from({length:n}, (_,i)=>i);
-        function find(a){ return parent[a]===a ? a : (parent[a]=find(parent[a])); }
-        function uni(a,b){ a=find(a); b=find(b); if(a!==b) parent[b]=a; }
-        const R2 = radiusPx * radiusPx;
-        for (let i=0;i<n;i++){
-          for (let j=i+1;j;j++){
-            const dx = items[i].dot.x - items[j].dot.x;
-            const dy = items[i].dot.y - items[j].dot.y;
-            if (dx*dx + dy*dy <= R2) uni(i,j);
-          }
-        }
-      }
-
       function applyClustering(items){
         clearStacks();
         showAllLabels();
         const z = map.getZoom();
         if (z < HIDE_LABELS_BELOW_Z){ hideAllLabels(); return; }
         if (z > STACK_ON_AT_Z) return;
+
         const radiusPx = milesToPixels(GROUP_RADIUS_MILES);
-        const clusters = (function(items, radiusPx){
-          const n = items.length;
-          const parent = Array.from({length:n}, (_,i)=>i);
-          function find(a){ return parent[a]===a ? a : (parent[a]=find(parent[a])); }
-          function uni(a,b){ a=find(a); b=find(b); if(a!==b) parent[b]=a; }
-          const R2 = radiusPx * radiusPx;
-          for (let i=0;i<n;i++){
-            for (let j=i+1;j<n;j++){
-              const dx = items[i].dot.x - items[j].dot.x;
-              const dy = items[i].dot.y - items[j].dot.y;
-              if (dx*dx + dy*dy <= R2) uni(i,j);
-            }
+
+        // Simple union-find clustering on dot positions
+        const n = items.length;
+        const parent = Array.from({length:n}, (_,i)=>i);
+        function find(a){ return parent[a]===a ? a : (parent[a]=find(parent[a])); }
+        function uni(a,b){ a=find(a); b=find(b); if(a!==b) parent[b]=a; }
+        const R2 = radiusPx * radiusPx;
+        for (let i=0;i<n;i++){
+          for (let j=i+1;j<n;j++){
+            const dx = items[i].dot.x - items[j].dot.x;
+            const dy = items[i].dot.y - items[j].dot.y;
+            if (dx*dx + dy*dy <= R2) uni(i,j);
           }
-          const groups = new Map();
-          for (let i=0;i<n;i++){
-            const r = find(i);
-            if (!groups.has(r)) groups.set(r, []);
-            groups.get(r).push(i);
-          }
-          return Array.from(groups.values()).filter(g => g.length >= 2);
-        })(items, radiusPx);
+        }
+        const groups = new Map();
+        for (let i=0;i<n;i++){
+          const r = find(i);
+          if (!groups.has(r)) groups.set(r, []);
+          groups.get(r).push(i);
+        }
+        const clusters = Array.from(groups.values()).filter(g => g.length >= 2);
 
         clusters.forEach(g=>{
           g.forEach(i=>{ items[i].el.style.display = 'none'; });
