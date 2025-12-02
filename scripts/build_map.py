@@ -10,7 +10,6 @@ import pandas as pd
 import requests
 from bs4 import BeautifulSoup
 
-# ---------- config ----------
 LEVELS = ['Level 1', 'Level 2', 'Level 3', 'Level 3+', 'Level 4', 'Level 4+', 'Level 5']
 
 PALETTE = {
@@ -35,8 +34,7 @@ LEVEL_BADGE = {
 
 RADIUS = {"large": 8, "medium": 7, "small": 6}
 STROKE = 2
-
-LABEL_GAP_PX = 10  # vertical gap between dot and label
+LABEL_GAP_PX = 10
 
 ZOOM_SNAP = 0.10
 ZOOM_DELTA = 0.75
@@ -53,7 +51,6 @@ STACK_ROW_GAP_PX = 6
 
 OUT_DIR = "docs"
 OUT_FILE = os.path.join(OUT_DIR, "aca_map.html")
-
 GRID_DEFAULT_PATH = os.path.join("docs", "grid.html")
 
 
@@ -150,34 +147,30 @@ def load_coords() -> pd.DataFrame:
     return df
 
 
-def _parse_grid_composite7(grid_html_path: str = GRID_DEFAULT_PATH):
-    """
-    Return (target_iata, composite_list_of_7) by reading docs/grid.html.
-
-    Target parsed from the origin chip (preferred) or header text as fallback.
-    """
+def _parse_grid_target_and_composites(grid_html_path: str = GRID_DEFAULT_PATH):
+    """Return (target_iata, [composite competitors])."""
     try:
         if not os.path.exists(grid_html_path):
             return None, []
+
         with open(grid_html_path, "r", encoding="utf-8") as f:
             html = f.read()
         soup = BeautifulSoup(html, "lxml")
 
         target = None
 
-        # Preferred: origin chip
+        # Prefer the origin chip
         origin_code = soup.select_one(".chip.origin .code")
         if origin_code:
             target = origin_code.get_text(strip=True).upper()
 
-        # Fallback: header text "LAX — ..."
+        # Fallback: header "LAX — ..."
         if not target:
             h = soup.select_one(".header h3")
             if h:
                 txt = (h.get_text() or "").strip()
                 target = (txt.split("—", 1)[0] or "").strip().upper()
 
-        # Composite row
         comp_row = None
         for row in soup.select(".container .row"):
             cat = row.select_one(".cat")
@@ -187,61 +180,27 @@ def _parse_grid_composite7(grid_html_path: str = GRID_DEFAULT_PATH):
             if "composite" in label:
                 comp_row = row
                 break
-        if not comp_row:
-            return target, []
 
-        chips = comp_row.select(".grid .chip")
-        out = []
-        for ch in chips:
-            if "origin" in (ch.get("class", []) or []):
-                continue
-            code_el = ch.select_one(".code")
-            if not code_el:
-                continue
-            code = code_el.get_text(strip=True).upper()
-            if code and len(code) <= 4:
-                out.append(code)
-            if len(out) >= 7:
-                break
-        return target, out
+        comps = []
+        if comp_row:
+            for ch in comp_row.select(".grid .chip"):
+                if "origin" in (ch.get("class", []) or []):
+                    continue
+                code_el = ch.select_one(".code")
+                if not code_el:
+                    continue
+                code = code_el.get_text(strip=True).upper()
+                if code and len(code) <= 4:
+                    comps.append(code)
+
+        return target, comps
     except Exception:
         return None, []
 
 
-def build_map(highlight_iatas=None) -> folium.Map:
-    """
-    Return a folium.Map for ACA airports in the Americas.
-
-    The origin airport from the grid is ALWAYS the only airport with a red outline.
-    All others are filled circles with no visible outline.
-    """
-    parsed_target, parsed_comp = _parse_grid_composite7(GRID_DEFAULT_PATH)
-
-    # Build a merged, ordered highlight list:
-    #   1) target from grid (if present)
-    #   2) composite-7 from grid
-    #   3) any explicit highlight_iatas passed in
-    base_codes = []
-
-    if parsed_target:
-        base_codes.append(parsed_target.upper())
-
-    for c in (parsed_comp or []):
-        base_codes.append(str(c).upper())
-
-    if highlight_iatas:
-        for c in highlight_iatas:
-            base_codes.append(str(c).upper())
-
-    # Deduplicate while preserving order
-    highlight_list = []
-    for c in base_codes:
-        if c and c not in highlight_list:
-            highlight_list.append(c)
-
-    # If we still somehow have nothing, just do not highlight
-    chosen = highlight_list[0] if highlight_list else None
-    highlight = set(highlight_list)
+def build_map() -> folium.Map:
+    # Always get target and composite list from grid.html
+    target_iata, composites = _parse_grid_target_and_composites(GRID_DEFAULT_PATH)
 
     aca_html = fetch_aca_html()
     aca = parse_aca_table(aca_html)
@@ -255,10 +214,17 @@ def build_map(highlight_iatas=None) -> folium.Map:
     if amer.empty:
         raise RuntimeError("No rows for the Americas after joining coordinates.")
 
-    # Ensure all highlighted codes can render, even if not ACA-scored
-    if highlight:
-        present_set = set(amer["iata"])
-        missing = [c for c in highlight_list if c not in present_set]
+    # Make sure target + composites all exist (add N/A rows if needed)
+    wanted_codes = []
+    if target_iata:
+        wanted_codes.append(target_iata)
+    for c in composites:
+        if c not in wanted_codes:
+            wanted_codes.append(c)
+
+    if wanted_codes:
+        present = set(amer["iata"])
+        missing = [c for c in wanted_codes if c not in present]
         if missing:
             extra = coords[coords["iata"].isin(missing)].copy()
             if not extra.empty:
@@ -276,10 +242,16 @@ def build_map(highlight_iatas=None) -> folium.Map:
                 amer = pd.concat([amer, extra[keep_cols]], ignore_index=True, sort=False)
                 amer = amer.drop_duplicates(subset=["iata"], keep="first")
 
-    plot_df = amer[amer["iata"].isin(highlight)].copy() if highlight else amer.copy()
-    if highlight:
-        order_map = {code: i for i, code in enumerate(highlight_list)}
-        plot_df["__order__"] = plot_df["iata"].map(order_map).fillna(9999).astype(int)
+    if wanted_codes:
+        plot_df = amer[amer["iata"].isin(wanted_codes)].copy()
+    else:
+        plot_df = amer.copy()
+
+    # Simple order: target first, then others
+    if target_iata:
+        plot_df["__order__"] = plot_df["iata"].apply(
+            lambda x: 0 if x == target_iata else 1
+        )
         plot_df = plot_df.sort_values("__order__")
 
     center_lat = float(plot_df["latitude_deg"].mean())
@@ -293,7 +265,8 @@ def build_map(highlight_iatas=None) -> folium.Map:
         zoom_start=4.7,
     )
 
-    groups = {lvl: folium.FeatureGroup(name=lvl, show=True).add_to(m) for lvl in (LEVELS + ["Unknown"])}
+    groups = {lvl: folium.FeatureGroup(name=lvl, show=True).add_to(m)
+              for lvl in (LEVELS + ["Unknown"])}
 
     updated = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
 
@@ -317,18 +290,6 @@ def build_map(highlight_iatas=None) -> folium.Map:
 
 .leaflet-tooltip.iata-tt .ttxt { display:inline-block; line-height:1.05; }
 
-.leaflet-tooltip.iata-tt .lvlchip { display:none; }
-.leaflet-tooltip.iata-tt .iata    { display:none; }
-
-.leaflet-control-layers-expanded{ box-shadow:0 4px 14px rgba(0,0,0,.12); border-radius:10px; }
-.last-updated {
-  position:absolute; right:12px; bottom:12px; z-index:9999;
-  background:#fff; padding:6px 8px; border-radius:8px;
-  box-shadow:0 2px 8px rgba(0,0,0,.12);
-  font:12px "Open Sans","Helvetica Neue",Arial,sans-serif; color:#485260;
-}
-
-/* stacked labels */
 .iata-stack{
   position:absolute; z-index:9998; pointer-events:none;
   background:transparent; border:0; box-shadow:none;
@@ -338,7 +299,6 @@ def build_map(highlight_iatas=None) -> folium.Map:
 }
 .iata-stack .row{ line-height:1.0; margin: __ROWGAP__px 0; }
 
-/* legend */
 .legend-box{
   position:absolute; left:12px; top:12px; z-index:9999;
   background:#fff; padding:6px 8px; border-radius:8px;
@@ -353,6 +313,12 @@ def build_map(highlight_iatas=None) -> folium.Map:
   border-radius:50%;
   display:inline-block;
   border:1px solid rgba(0,0,0,.25);
+}
+.last-updated {
+  position:absolute; right:12px; bottom:12px; z-index:9999;
+  background:#fff; padding:6px 8px; border-radius:8px;
+  box-shadow:0 2px 8px rgba(0,0,0,.12);
+  font:12px "Open Sans","Helvetica Neue",Arial,sans-serif; color:#485260;
 }
 </style>
 <div class="last-updated">Last updated: __UPDATED__</div>
@@ -376,14 +342,14 @@ def build_map(highlight_iatas=None) -> folium.Map:
     )
     m.get_root().html.add_child(folium.Element(legend_html))
 
+    # Draw all points; give target the red ring
     for _, r in plot_df.iterrows():
         lat, lon = float(r.latitude_deg), float(r.longitude_deg)
         size_key = r.get("size", "small")
         base_radius = RADIUS.get(size_key, 6)
 
-        # Only the chosen airport (target) gets a visible red outline.
-        if chosen and r.iata == chosen:
-            radius = base_radius * 1.5
+        if target_iata and r.iata == target_iata:
+            radius = base_radius * 1.7
             stroke_color = "#E74C3C"
             stroke_weight = max(STROKE, 3)
         else:
@@ -391,10 +357,10 @@ def build_map(highlight_iatas=None) -> folium.Map:
             stroke_color = "rgba(0,0,0,0)"
             stroke_weight = 0
 
-        fill_opacity = 0.95
-        offset_y = -(radius + max(stroke_weight, 0) + max(LABEL_GAP_PX, 1))
-
         lvl = r.aca_level if r.aca_level in PALETTE else "Unknown"
+        fill_opacity = 0.95
+        offset_y = -(radius + max(stroke_weight, 0) + LABEL_GAP_PX)
+
         dot = folium.CircleMarker(
             [lat, lon],
             radius=float(radius),
@@ -406,13 +372,14 @@ def build_map(highlight_iatas=None) -> folium.Map:
             popup=folium.Popup(
                 "<b>{airport}</b><br>IATA: {iata}<br>ACA: <b>{lvl}</b><br>Country: {ctry}".format(
                     airport=r.airport if pd.notna(r.get("airport")) and str(r.get("airport")).strip() else r.iata,
-                    iata=r.iata, lvl=lvl, ctry=r.get("country", "")
+                    iata=r.iata,
+                    lvl=lvl,
+                    ctry=r.get("country", ""),
                 ),
                 max_width=320,
             ),
         )
 
-        # Label text: IATA, badge or N/A
         if lvl == "Unknown":
             label_text = f"{r.iata}, N/A"
         else:
@@ -433,7 +400,7 @@ def build_map(highlight_iatas=None) -> folium.Map:
 
         dot.add_to(groups[lvl])
 
-    # JS: clustering only (no zoom meter, no export)
+    # clustering JS (unchanged except no zoom meter / download)
     js = r"""
 (function(){
   try {
@@ -442,14 +409,10 @@ def build_map(highlight_iatas=None) -> folium.Map:
     const ZOOM_DELTA = __ZOOM_DELTA__;
     const WHEEL_PX = __WHEEL_PX__;
     const WHEEL_DEBOUNCE = __WHEEL_DEBOUNCE__;
-    const DB_MAX_HISTORY = __DB_MAX_HISTORY__;
     const UPDATE_DEBOUNCE_MS = __UPDATE_DEBOUNCE_MS__;
-
     const STACK_ON_AT_Z = __STACK_ON_AT_Z__;
     const HIDE_LABELS_BELOW_Z = __HIDE_LABELS_BELOW_Z__;
     const GROUP_RADIUS_MILES = __GROUP_RADIUS_MILES__;
-
-    window.ACA_DB = window.ACA_DB || { latest:null, history:[] };
 
     function until(cond, cb, tries=200, delay=50){
       (function tick(n){ if(cond()) return cb(); if(n<=0) return; setTimeout(()=>tick(n-1), delay); })(tries);
@@ -511,7 +474,6 @@ def build_map(highlight_iatas=None) -> folium.Map:
           const cls = Array.from(el.classList);
           const size = (cls.find(c=>c.startsWith('size-'))||'size-small').slice(5);
           const iata = (cls.find(c=>c.startsWith('tt-'))||'tt-').slice(3);
-
           const txt = (el.textContent || '').split(',');
           const level = (txt.length > 1 ? txt[1].trim() : '');
 
@@ -531,43 +493,12 @@ def build_map(highlight_iatas=None) -> folium.Map:
         function uni(a,b){ a=find(a); b=find(b); if(a!==b) parent[b]=a; }
         const R2 = radiusPx * radiusPx;
         for (let i=0;i<n;i++){
-          for (let j=i+1;j<n;j++){
+          for (let j=i+1;j;j++){
             const dx = items[i].dot.x - items[j].dot.x;
             const dy = items[i].dot.y - items[j].dot.y;
             if (dx*dx + dy*dy <= R2) uni(i,j);
           }
         }
-        const groups = new Map();
-        for (let i=0;i<n;i++){
-          const r = find(i);
-          if (!groups.has(r)) groups.set(r, []);
-          groups.get(r).push(i);
-        }
-        return Array.from(groups.values()).filter(g => g.length >= 2);
-      }
-
-      function drawStack(groupIdxs, items){
-        const div = document.createElement('div');
-        div.className = 'iata-stack';
-        const sorted = groupIdxs.slice().sort((a,b)=> items[a].label.y - items[b].label.y);
-        const anchorIdx = sorted[0];
-        const anchor = items[anchorIdx];
-        sorted.forEach(i=>{
-          const r = document.createElement('div');
-          r.className = 'row';
-          r.textContent = items[i].iata + (items[i].level ? (", " + items[i].level) : "");
-          div.appendChild(r);
-        });
-        const pane = map.getPanes().tooltipPane;
-        pane.appendChild(div);
-        requestAnimationFrame(()=>{
-          const stackRect = div.getBoundingClientRect();
-          const extraH = Math.max(0, stackRect.height - anchor.label.h);
-          const left = Math.round(anchor.label.x);
-          const top  = Math.round(anchor.label.y - extraH);
-          div.style.left = left + "px";
-          div.style.top  = top  + "px";
-        });
       }
 
       function applyClustering(items){
@@ -577,10 +508,50 @@ def build_map(highlight_iatas=None) -> folium.Map:
         if (z < HIDE_LABELS_BELOW_Z){ hideAllLabels(); return; }
         if (z > STACK_ON_AT_Z) return;
         const radiusPx = milesToPixels(GROUP_RADIUS_MILES);
-        const clusters = buildClusters(items, radiusPx);
+        const clusters = (function(items, radiusPx){
+          const n = items.length;
+          const parent = Array.from({length:n}, (_,i)=>i);
+          function find(a){ return parent[a]===a ? a : (parent[a]=find(parent[a])); }
+          function uni(a,b){ a=find(a); b=find(b); if(a!==b) parent[b]=a; }
+          const R2 = radiusPx * radiusPx;
+          for (let i=0;i<n;i++){
+            for (let j=i+1;j<n;j++){
+              const dx = items[i].dot.x - items[j].dot.x;
+              const dy = items[i].dot.y - items[j].dot.y;
+              if (dx*dx + dy*dy <= R2) uni(i,j);
+            }
+          }
+          const groups = new Map();
+          for (let i=0;i<n;i++){
+            const r = find(i);
+            if (!groups.has(r)) groups.set(r, []);
+            groups.get(r).push(i);
+          }
+          return Array.from(groups.values()).filter(g => g.length >= 2);
+        })(items, radiusPx);
+
         clusters.forEach(g=>{
           g.forEach(i=>{ items[i].el.style.display = 'none'; });
-          drawStack(g, items);
+          const div = document.createElement('div');
+          div.className = 'iata-stack';
+          const sorted = g.slice().sort((a,b)=> items[a].label.y - items[b].label.y);
+          const anchorIdx = sorted[0];
+          const anchor = items[anchorIdx];
+          sorted.forEach(i=>{
+            const r = document.createElement('div');
+            r.className = 'row';
+            r.textContent = items[i].iata + (items[i].level ? (", " + items[i].level) : "");
+            div.appendChild(r);
+          });
+          pane.appendChild(div);
+          requestAnimationFrame(()=>{
+            const stackRect = div.getBoundingClientRect();
+            const extraH = Math.max(0, stackRect.height - anchor.label.h);
+            const left = Math.round(anchor.label.x);
+            const top  = Math.round(anchor.label.y - extraH);
+            div.style.left = left + "px";
+            div.style.top  = top  + "px";
+          });
         });
       }
 
@@ -590,14 +561,15 @@ def build_map(highlight_iatas=None) -> folium.Map:
           applyClustering(items);
         }));
       }
-      function scheduleUpdate(){ setTimeout(updateAll, __UPDATE_DEBOUNCE_MS__); }
+
+      function scheduleUpdate(){ setTimeout(updateAll, UPDATE_DEBOUNCE_MS); }
 
       if (map.whenReady) map.whenReady(updateAll);
       map.on('zoomend moveend overlayadd overlayremove layeradd layerremove resize', scheduleUpdate);
       updateAll();
     }
-  } catch (err) {
-    console.error("[ACA] init failed:", err);
+  } catch(e){
+    console.error("[ACA] init failed:", e);
   }
 })();
 """
@@ -608,13 +580,11 @@ def build_map(highlight_iatas=None) -> folium.Map:
           .replace("__ZOOM_DELTA__", str(float(ZOOM_DELTA)))
           .replace("__WHEEL_PX__", str(int(WHEEL_PX_PER_ZOOM)))
           .replace("__WHEEL_DEBOUNCE__", str(int(WHEEL_DEBOUNCE_MS)))
-          .replace("__DB_MAX_HISTORY__", str(int(DB_MAX_HISTORY)))
           .replace("__UPDATE_DEBOUNCE_MS__", str(int(UPDATE_DEBOUNCE_MS)))
           .replace("__STACK_ON_AT_Z__", str(float(STACK_ON_AT_Z)))
           .replace("__HIDE_LABELS_BELOW_Z__", str(float(HIDE_LABELS_BELOW_Z)))
           .replace("__GROUP_RADIUS_MILES__", str(float(GROUP_RADIUS_MILES)))
     )
-
     m.get_root().script.add_child(folium.Element(js))
     return m
 
