@@ -1,4 +1,5 @@
 name: Build grid + ACA table (HTML)
+
 on:
   workflow_dispatch:
     inputs:
@@ -13,6 +14,7 @@ permissions:
 jobs:
   build-both:
     runs-on: ubuntu-latest
+
     steps:
       - uses: actions/checkout@v4
 
@@ -31,9 +33,7 @@ jobs:
       - name: Run all builders
         run: |
           python scripts/run_all.py \
-            --iata "${{ github.event.inputs.iata }}" \
-            --wsize "${{ github.event.inputs.wsize }}" \
-            --wgrowth "${{ github.event.inputs.wgrowth }}"
+            --iata "${{ github.event.inputs.iata }}"
 
       - name: Commit & push site files
         run: |
