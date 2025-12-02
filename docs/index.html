@@ -1,5 +1,5 @@
 <!doctype html><meta charset="utf-8">
-<title>JFK — Grid + ACA + Map</title>
+<title>LAX — Grid + ACA + Map</title>
 <meta name="viewport" content="width=device-width, initial-scale=1"/>
 <style>
   :root {
@@ -19,7 +19,6 @@
   iframe { width:100%; height:620px; border:0; border-radius:12px; box-shadow:0 2px 10px rgba(0,0,0,.05); background:#fff; }
   @media (max-width: 900px) { iframe { height: 520px; } }
 
-  /* Modal */
   .modal-backdrop {
     position:fixed; inset:0; background:rgba(0,0,0,.35); display:none; align-items:center; justify-content:center; z-index:9999;
   }
@@ -42,7 +41,7 @@
 
 <div class="wrap">
   <div class="topbar">
-    <h2 id="title">JFK — Grid + ACA + Map</h2>
+    <h2 id="title">LAX — Grid + ACA + Map</h2>
     <div class="row">
       <button id="btnReset" class="btn" type="button">Reset / Choose another run</button>
       <a id="btnAction" class="btn" href="https://github.com/motstothartarup/Aviation-Iia-Master-Repository/actions/workflows/run-both.yml" target="_blank" rel="noopener">Run new build</a>
@@ -50,13 +49,13 @@
   </div>
 
   <div class="card">
-    <div class="muted">Similar-throughput airports grid</div>
-    <iframe id="gridFrame" src="grid.html" title="Similar-throughput grid"></iframe>
+    <div class="muted">Competitor Grid</div>
+    <iframe id="gridFrame" src="grid.html" title="Competitor Grid"></iframe>
   </div>
 
   <div class="card">
-    <div class="muted">ACA scores for airports with similar throughput (JFK)</div>
-    <iframe id="acaFrame" src="aca_table.html" title="ACA scores table"></iframe>
+    <div class="muted">ACA scores of airports with similar throughput to LAX</div>
+    <iframe id="acaFrame" src="aca_table.html" title="ACA Region Table"></iframe>
   </div>
 
   <div class="card">
@@ -65,7 +64,6 @@
   </div>
 </div>
 
-<!-- Modal -->
 <div class="modal-backdrop" id="modalBg" aria-hidden="true">
   <div class="modal" role="dialog" aria-modal="true" aria-labelledby="modalTitle">
     <h3 id="modalTitle">Reset / Choose another run</h3>
@@ -73,15 +71,17 @@
       <div>
         <label for="runSelect">Pick from previous runs</label>
         <select id="runSelect"><option value="">Loading…</option></select>
-        <div class="hint">Switch instantly to any run that is already built.</div>
+        <div class="hint">Switch instantly to any run that’s already built.</div>
       </div>
       <div>
-        <label>Run a new build</label>
-        <div class="hint">
-          Click “Run new build” at the top right of this page, then enter a new IATA code
-          in the GitHub Actions form. After the Action finishes, refresh this page and pick
-          the new run from the list on the left.
+        <label>Or set a new target</label>
+        <div class="row">
+          <div style="flex:1; min-width:120px;">
+            <label for="iataInput">IATA</label>
+            <input id="iataInput" placeholder="e.g., LAX" />
+          </div>
         </div>
+        <div class="hint">Then click “Run new build”. After the Action finishes, refresh and pick it above.</div>
       </div>
     </div>
     <div class="actions">
@@ -103,9 +103,6 @@
   const btnReset  = document.getElementById('btnReset');
   const btnClose  = document.getElementById('btnClose');
   const runSelect = document.getElementById('runSelect');
-  const btnApply  = document.getElementById('btnApplyRun');
-
-  let runsCache = [];
 
   function openModal(){ modalBg.style.display = "flex"; modalBg.setAttribute("aria-hidden", "false"); }
   function closeModal(){ modalBg.style.display = "none"; modalBg.setAttribute("aria-hidden", "true"); }
@@ -119,8 +116,7 @@
       const res = await fetch(runManifestUrl, {cache:"no-store"});
       if (!res.ok) throw new Error("HTTP " + res.status);
       const data = await res.json();
-      runsCache = data.runs || [];
-      renderRunOptions(runsCache);
+      renderRunOptions(data.runs || []);
     } catch(err){
       runSelect.innerHTML = '<option value="">No manifest found</option>';
     }
@@ -138,14 +134,13 @@
     }).join("");
   }
 
-  btnApply.addEventListener('click', ()=>{
+  document.getElementById('btnApplyRun').addEventListener('click', ()=>{
     const p = runSelect.value;
     if (!p) return;
-    const run = runsCache.find(r => r.path === p) || {};
     gridFrame.src = p + "/grid.html";
     acaFrame.src  = p + "/aca_table.html";
     mapFrame.src  = p + "/aca_map.html";
-    const iata  = run.iata || "";
+    const iata = p.split("/").pop().split("-")[0] || "";
     titleEl.textContent = `${iata} — Grid + ACA + Map`;
     closeModal();
   });
