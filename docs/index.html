@@ -50,17 +50,17 @@
   </div>
 
   <div class="card">
-    <div class="muted">Competitor Grid</div>
-    <iframe id="gridFrame" src="grid.html" title="Competitor Grid"></iframe>
+    <div class="muted">Similar-throughput airports grid</div>
+    <iframe id="gridFrame" src="grid.html" title="Similar-throughput grid"></iframe>
   </div>
 
   <div class="card">
-    <div class="muted">ACA Airports by Region (defaulted to LAX)</div>
-    <iframe id="acaFrame" src="aca_table.html" title="ACA Region Table"></iframe>
+    <div class="muted">ACA scores for airports with similar throughput (LAX)</div>
+    <iframe id="acaFrame" src="aca_table.html" title="ACA scores table"></iframe>
   </div>
 
   <div class="card">
-    <div class="muted">ACA Map (Americas)</div>
+    <div class="muted">ACA map (Americas)</div>
     <iframe id="mapFrame" src="aca_map.html" title="ACA Map"></iframe>
   </div>
 </div>
@@ -73,25 +73,15 @@
       <div>
         <label for="runSelect">Pick from previous runs</label>
         <select id="runSelect"><option value="">Loading…</option></select>
-        <div class="hint">Switch instantly to any run that’s already built.</div>
+        <div class="hint">Switch instantly to any run that is already built.</div>
       </div>
       <div>
-        <label>Or set a new target</label>
-        <div class="row">
-          <div style="flex:1; min-width:120px;">
-            <label for="iataInput">IATA</label>
-            <input id="iataInput" placeholder="e.g., LAX" />
-          </div>
-          <div style="flex:1; min-width:120px;">
-            <label for="wsizeInput">Weight: total passengers</label>
-            <input id="wsizeInput" placeholder="85" />
-          </div>
-          <div style="flex:1; min-width:120px;">
-            <label for="wgrowthInput">Weight: growth</label>
-            <input id="wgrowthInput" placeholder="5" />
-          </div>
+        <label>Run a new build</label>
+        <div class="hint">
+          Click “Run new build” at the top right of this page, then enter a new IATA code
+          in the GitHub Actions form. After the Action finishes, refresh this page and pick
+          the new run from the list on the left.
         </div>
-        <div class="hint">Then click “Run new build”. After the Action finishes, refresh and pick it above.</div>
       </div>
     </div>
     <div class="actions">
@@ -115,6 +105,8 @@
   const runSelect = document.getElementById('runSelect');
   const btnApply  = document.getElementById('btnApplyRun');
 
+  let runsCache = [];
+
   function openModal(){ modalBg.style.display = "flex"; modalBg.setAttribute("aria-hidden", "false"); }
   function closeModal(){ modalBg.style.display = "none"; modalBg.setAttribute("aria-hidden", "true"); }
 
@@ -127,7 +119,8 @@
       const res = await fetch(runManifestUrl, {cache:"no-store"});
       if (!res.ok) throw new Error("HTTP " + res.status);
       const data = await res.json();
-      renderRunOptions(data.runs || []);
+      runsCache = data.runs || [];
+      renderRunOptions(runsCache);
     } catch(err){
       runSelect.innerHTML = '<option value="">No manifest found</option>';
     }
@@ -140,22 +133,20 @@
     }
     runs.sort((a,b)=> (b.ts||0) - (a.ts||0));
     runSelect.innerHTML = runs.map(r=>{
-      const label = `${r.iata} — ws:${r.wsize} wg:${r.wgrowth} — ${new Date((r.ts||0)*1000).toLocaleString()}`;
+      const label = `${r.iata} — ${new Date((r.ts||0)*1000).toLocaleString()}`;
       return `<option value="${r.path}">${label}</option>`;
     }).join("");
   }
 
-  document.getElementById('btnApplyRun').addEventListener('click', ()=>{
+  btnApply.addEventListener('click', ()=>{
     const p = runSelect.value;
     if (!p) return;
+    const run = runsCache.find(r => r.path === p) || {};
     gridFrame.src = p + "/grid.html";
     acaFrame.src  = p + "/aca_table.html";
     mapFrame.src  = p + "/aca_map.html";
-    const parts = p.split("/").pop().split("-");
-    const iata  = parts[0] || "";
-    const wsize = parts[1] || "";
-    const wg    = parts[2] || "";
-    titleEl.textContent = `${iata} — Grid + ACA + Map (ws:${wsize} wg:${wg})`;
+    const iata  = run.iata || "";
+    titleEl.textContent = `${iata} — Grid + ACA + Map`;
     closeModal();
   });
 
