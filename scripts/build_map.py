@@ -1,11 +1,9 @@
 # scripts/build_map.py
 # ACA Americas map with:
-#  - level badge stacked ABOVE IATA in each label (legacy style preserved)
-#  - optional highlighting (bigger dot + outline) for a set of IATA codes
-#  - non-interest airports: no border, no labels, dimmed & smaller
-#  - HIGH-RES JPEG export of the CURRENT VIEW (keeps basemap), hiding UI while capturing
-# build_map(highlight_iatas=None) -> folium.Map
-# If executed as a script, writes docs/aca_map.html.
+#  - target airport highlighted (red outline), others plain fills
+#  - optional highlighting for a set of IATA codes
+#  - labels "IATA, LEVEL" or "IATA, Unscored" for unknowns
+#  - custom legend and zoom meter, no extra Leaflet legend or export button
 
 import io
 import os
@@ -30,7 +28,6 @@ PALETTE = {
     "Level 5": "#E74C3C",
 }
 
-# Show as a short badge above IATA (legacy; we now render "IATA, LEVEL" text, but keep this map)
 LEVEL_BADGE = {
     "Level 1": "1",
     "Level 2": "2",
@@ -48,8 +45,8 @@ LABEL_GAP_PX = 10  # vertical gap between dot and label
 
 # --- Zoom tuning knobs (triple speed) ---
 ZOOM_SNAP = 0.10
-ZOOM_DELTA = 0.75          # was 0.25 → triple zoom per tick
-WHEEL_PX_PER_ZOOM = 100    # was 300 → triple scroll sensitivity
+ZOOM_DELTA = 0.75
+WHEEL_PX_PER_ZOOM = 100
 WHEEL_DEBOUNCE_MS = 10
 
 # --- Position DB knobs ---
@@ -70,7 +67,7 @@ STACK_ROW_GAP_PX = 6
 OUT_DIR = "docs"
 OUT_FILE = os.path.join(OUT_DIR, "aca_map.html")
 
-# NEW: read Composite 7 from the grid output
+# read target + composite list from the grid output
 GRID_DEFAULT_PATH = os.path.join("docs", "grid.html")
 
 
@@ -169,7 +166,6 @@ def load_coords() -> pd.DataFrame:
     return df
 
 
-# NEW: read target + 7 Composite codes from docs/grid.html
 def _parse_grid_composite7(grid_html_path: str = GRID_DEFAULT_PATH):
     """
     Return (target_iata, composite_list_of_7) by reading docs/grid.html.
@@ -182,14 +178,12 @@ def _parse_grid_composite7(grid_html_path: str = GRID_DEFAULT_PATH):
             html = f.read()
         soup = BeautifulSoup(html, "lxml")
 
-        # Target from header: "<h3>JFK — John F. Kennedy Intl</h3>"
         target = None
         h = soup.select_one(".header h3")
         if h:
             txt = (h.get_text() or "").strip()
             target = (txt.split("—", 1)[0] or "").strip().upper()
 
-        # Find the composite row
         comp_row = None
         for row in soup.select(".container .row"):
             cat = row.select_one(".cat")
@@ -205,7 +199,6 @@ def _parse_grid_composite7(grid_html_path: str = GRID_DEFAULT_PATH):
         chips = comp_row.select(".grid .chip")
         out = []
         for ch in chips:
-            # skip the origin chip if present
             if "origin" in (ch.get("class", []) or []):
                 continue
             code_el = ch.select_one(".code")
@@ -225,22 +218,28 @@ def _parse_grid_composite7(grid_html_path: str = GRID_DEFAULT_PATH):
 def build_map(highlight_iatas=None) -> folium.Map:
     """
     Return a folium.Map for ACA airports in the Americas.
-    highlight_iatas: optional set/list of IATA codes to emphasize (bigger + outline + labels).
-      - FIRST item in this list = "chosen" airport (RED outline)
-      - Remaining items = competitors (YELLOW outline)
-    If not provided, we read [target + composite-7] from docs/grid.html.
+
+    highlight_iatas: optional set/list of IATA codes to emphasize.
+      - Target airport is taken from the grid HTML and gets a red outline.
+      - Other airports get filled circles with no visible outline.
+    If highlight_iatas is None, we read [target + composite-7] from docs/grid.html.
     """
-    # preserve order and provide a set for membership checks
+    parsed_target, parsed_comp = _parse_grid_composite7(GRID_DEFAULT_PATH)
+
     if not highlight_iatas:
-        tgt, comp7 = _parse_grid_composite7(GRID_DEFAULT_PATH)
-        if tgt and comp7:
-            highlight_iatas = [tgt] + comp7
+        if parsed_target and parsed_comp:
+            highlight_iatas = [parsed_target] + parsed_comp
         else:
             print("[WARN] Could not parse Composite 7 from grid; proceeding without highlight set.", file=sys.stderr)
 
     highlight_list = [str(x).upper() for x in (highlight_iatas or [])]
+    # Ensure the chosen airport is the grid target when possible
+    if parsed_target and parsed_target.upper() in highlight_list:
+        chosen = parsed_target.upper()
+    else:
+        chosen = highlight_list[0] if highlight_list else None
+
     highlight = set(highlight_list)
-    chosen = highlight_list[0] if highlight_list else None
 
     aca_html = fetch_aca_html()
     aca = parse_aca_table(aca_html)
@@ -254,8 +253,7 @@ def build_map(highlight_iatas=None) -> folium.Map:
     if amer.empty:
         raise RuntimeError("No rows for the Americas after joining coordinates.")
 
-    # --- NEW: Guarantee all requested highlight codes can render ---
-    # 1) If any highlight code is missing from amer (e.g., not in ACA Americas), add from coords with 'Unknown' level
+    # Guarantee all requested highlight codes can render, even if not ACA-scored
     if highlight:
         present_set = set(amer["iata"])
         missing = [c for c in highlight_list if c not in present_set]
@@ -269,7 +267,6 @@ def build_map(highlight_iatas=None) -> folium.Map:
                     aca_level="Unknown",
                     region4="Americas",
                 )
-                # align columns
                 keep_cols = list(amer.columns)
                 for col in keep_cols:
                     if col not in extra.columns:
@@ -277,14 +274,13 @@ def build_map(highlight_iatas=None) -> folium.Map:
                 amer = pd.concat([amer, extra[keep_cols]], ignore_index=True, sort=False)
                 amer = amer.drop_duplicates(subset=["iata"], keep="first")
 
-    # 2) Plot ONLY the highlight set (target + 7 composite), in the same order as grid
+    # Plot only the highlight set if present
     plot_df = amer[amer["iata"].isin(highlight)].copy() if highlight else amer.copy()
     if highlight:
         order_map = {code: i for i, code in enumerate(highlight_list)}
         plot_df["__order__"] = plot_df["iata"].map(order_map).fillna(9999).astype(int)
         plot_df = plot_df.sort_values("__order__")
 
-    # Center: centroid of plotted points; zoom: open at 4.7
     center_lat = float(plot_df["latitude_deg"].mean())
     center_lon = float(plot_df["longitude_deg"].mean())
 
@@ -296,13 +292,11 @@ def build_map(highlight_iatas=None) -> folium.Map:
         zoom_start=4.7,
     )
 
-    # include an 'Unknown' group so augmented airports can be added cleanly
     groups = {lvl: folium.FeatureGroup(name=lvl, show=True).add_to(m) for lvl in (LEVELS + ["Unknown"])}
 
     updated = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
-    BUILD_VER = "r1.9-zoomx3+open4.7+yellow-hot+nolabels-cold+no-border-cold+labels-comma-level+exportjpeg-mapdiv+composite7-only"
 
-    # --- CSS + footer badge + zoom meter + stack styles ---
+    # footer + zoom meter + stack styles
     badge_html = (
         r"""
 <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate"/>
@@ -321,10 +315,9 @@ def build_map(highlight_iatas=None) -> folium.Map:
 .leaflet-tooltip-left:before,
 .leaflet-tooltip-right:before{ display:none !important; }
 
-/* We feed the tooltip HTML already containing .ttxt */
 .leaflet-tooltip.iata-tt .ttxt { display:inline-block; line-height:1.05; }
 
-/* legacy sub-spans suppressed (we now show "IATA, LEVEL" text only) */
+/* legacy spans suppressed (we now show "IATA, LEVEL" text only) */
 .leaflet-tooltip.iata-tt .lvlchip { display:none; }
 .leaflet-tooltip.iata-tt .iata    { display:none; }
 
@@ -343,8 +336,7 @@ def build_map(highlight_iatas=None) -> folium.Map:
   user-select:none; pointer-events:none;
 }
 
-/* Stack list styled like labels (no bg/border/shadow) */
-/* IMPORTANT: keep black when stacked (no greying) */
+/* stacked label list */
 .iata-stack{
   position:absolute; z-index:9998; pointer-events:none;
   background:transparent; border:0; box-shadow:none;
@@ -354,7 +346,7 @@ def build_map(highlight_iatas=None) -> folium.Map:
 }
 .iata-stack .row{ line-height:1.0; margin: __ROWGAP__px 0; }
 
-/* Legend box under zoom meter (DOTS) */
+/* Legend box */
 .legend-box{
   position:absolute; left:12px; top:170px; z-index:9999;
   background:#fff; padding:6px 8px; border-radius:8px;
@@ -364,28 +356,22 @@ def build_map(highlight_iatas=None) -> folium.Map:
 }
 .legend-box .title{ font-weight:600; margin-bottom:4px; }
 .legend-box .row{ display:flex; align-items:center; gap:6px; margin:3px 0; }
-.legend-box .dot{ width:10px; height:10px; border-radius:50%; display:inline-block; border:1px solid rgba(0,0,0,.25); }
-
-/* Download button */
-#downloadBtn{
-  position:absolute; top:12px; left:12px; z-index:9999;
-  background:#3498db; color:#fff; border:none; border-radius:6px;
-  padding:6px 12px; cursor:pointer;
+.legend-box .dot{
+  width:10px; height:10px;
+  border-radius:50%;
+  display:inline-block;
+  border:1px solid rgba(0,0,0,.25);
 }
 </style>
-<div class="last-updated">Last updated: __UPDATED__ • __VER__</div>
+<div class="last-updated">Last updated: __UPDATED__</div>
 <div id="zoomMeter" class="zoom-meter">Zoom: --%</div>
-<button id="downloadBtn" type="button">Download as JPEG</button>
-<!-- html2canvas for export -->
-<script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
 """
         .replace("__UPDATED__", updated)
-        .replace("__VER__", BUILD_VER)
         .replace("__ROWGAP__", str(int(STACK_ROW_GAP_PX)))
     )
     m.get_root().html.add_child(folium.Element(badge_html))
 
-    # --- legend (under zoom meter) ---
+    # custom legend (simple circles)
     legend_items = "".join(
         '<div class="row"><span class="dot" style="background:{color}"></span>{lvl}</div>'.format(
             color=PALETTE.get(lvl, "#666"), lvl=lvl
@@ -400,28 +386,25 @@ def build_map(highlight_iatas=None) -> folium.Map:
     )
     m.get_root().html.add_child(folium.Element(legend_html))
 
-    # --- dots + permanent tooltips (labels) ---
+    # dots + permanent tooltips
     for _, r in plot_df.iterrows():
         lat, lon = float(r.latitude_deg), float(r.longitude_deg)
         size_key = r.get("size", "small")
         base_radius = RADIUS.get(size_key, 6)
 
-        # Determine highlight type
         if chosen and r.iata == chosen:
-            # CHOSEN: RED outline
+            # Target airport: red outline
             radius = base_radius * 1.5
-            stroke_color = "#E74C3C"     # red outline
+            stroke_color = "#E74C3C"
             stroke_weight = max(STROKE, 3)
-            fill_opacity = 0.95
-            add_label = True
         else:
-            # Other competitors: YELLOW outline
+            # Other airports: no visible outline
             radius = base_radius * 1.5
-            stroke_color = "#F1C40F"     # yellow outline
-            stroke_weight = max(STROKE, 3)
-            fill_opacity = 0.95
-            add_label = True
+            stroke_color = "rgba(0,0,0,0)"
+            stroke_weight = 0
 
+        fill_opacity = 0.95
+        add_label = True
         offset_y = -(radius + max(stroke_weight, 0) + max(LABEL_GAP_PX, 1))
 
         lvl = r.aca_level if r.aca_level in PALETTE else "Unknown"
@@ -436,16 +419,19 @@ def build_map(highlight_iatas=None) -> folium.Map:
             popup=folium.Popup(
                 "<b>{airport}</b><br>IATA: {iata}<br>ACA: <b>{lvl}</b><br>Country: {ctry}".format(
                     airport=r.airport if pd.notna(r.get("airport")) and str(r.get("airport")).strip() else r.iata,
-                    iata=r.iata, lvl=lvl, ctry=r.get("country","")
+                    iata=r.iata, lvl=lvl, ctry=r.get("country", "")
                 ),
                 max_width=320,
             ),
         )
 
-        # Label content -> "IATA, LEVELBADGE" (single line)
         if add_label:
-            lvl_badge = LEVEL_BADGE.get(lvl, "")
-            label_html = f'<div class="ttxt">{r.iata}, {lvl_badge}</div>'
+            if lvl == "Unknown":
+                label_text = f"{r.iata}, Unscored"
+            else:
+                lvl_badge = LEVEL_BADGE.get(lvl, "")
+                label_text = f"{r.iata}, {lvl_badge}"
+            label_html = f'<div class="ttxt">{label_text}</div>'
             dot.add_child(
                 folium.Tooltip(
                     label_html,
@@ -460,9 +446,11 @@ def build_map(highlight_iatas=None) -> folium.Map:
 
         dot.add_to(groups[lvl])
 
-    folium.LayerControl(collapsed=False).add_to(m)
+    # Remove Leaflet LayerControl to avoid duplicate legend / "cartodbpositron" entry
+    # (we keep only the custom legend box above)
+    # folium.LayerControl(collapsed=False).add_to(m)
 
-    # --- JS: smooth zoom + zoom meter + position DB + stacks on zoom-out + miles->px scaling + EXPORT ---
+    # JS: zoom meter + clustering (unchanged except export removed)
     js = r"""
 (function(){
   try {
@@ -551,7 +539,6 @@ def build_map(highlight_iatas=None) -> folium.Map:
           const size = (cls.find(c=>c.startsWith('size-'))||'size-small').slice(5);
           const iata = (cls.find(c=>c.startsWith('tt-'))||'tt-').slice(3);
 
-          // capture level badge from label text "IATA, LEVEL"
           const txt = (el.textContent || '').split(',');
           const level = (txt.length > 1 ? txt[1].trim() : '');
 
@@ -595,7 +582,6 @@ def build_map(highlight_iatas=None) -> folium.Map:
         sorted.forEach(i=>{
           const r = document.createElement('div');
           r.className = 'row';
-          // ALWAYS show "IATA, LEVEL"
           r.textContent = items[i].iata + (items[i].level ? (", " + items[i].level) : "");
           div.appendChild(r);
         });
@@ -633,45 +619,11 @@ def build_map(highlight_iatas=None) -> folium.Map:
           applyClustering(items);
         }));
       }
-      function updateMeter(){
-        if (!meter) return;
-        const z = map.getZoom();
-        const minZ = (map.getMinZoom && map.getMinZoom()) || 0;
-        let maxZ = (map.getMaxZoom && map.getMaxZoom()); if (maxZ == null) maxZ = 19;
-        const pct = Math.round(((z - minZ)/Math.max(1e-6, (maxZ - minZ))) * 100);
-        meter.textContent = "Zoom: " + pct + "% (z=" + z.toFixed(2) + ")";
-      }
       function scheduleUpdate(){ setTimeout(updateAll, __UPDATE_DEBOUNCE_MS__); }
 
       if (map.whenReady) map.whenReady(updateAll);
       map.on('zoomend moveend overlayadd overlayremove layeradd layerremove resize', scheduleUpdate);
       updateAll();
-
-      // --------- HIGH-RES JPEG EXPORT (capture the WHOLE map div so basemap is included) ---------
-      (function setupExport(){
-        const btn = document.getElementById('downloadBtn');
-        if (!btn) return;
-        btn.addEventListener('click', () => {
-          const hideElems = [
-            document.querySelector('.leaflet-control-layers'),
-            document.querySelector('.leaflet-control-zoom'),
-            document.querySelector('.last-updated'),
-            document.getElementById('zoomMeter'),
-            btn
-          ];
-          hideElems.forEach(e=>{ if(e){ e.dataset._prevDisplay = e.style.display; e.style.display='none'; }});
-          const mapDiv = document.getElementById(MAP_NAME); // THIS captures tiles + overlays
-          if (!mapDiv) return;
-          html2canvas(mapDiv, { scale: 3 }).then(canvas => {
-            const link = document.createElement('a');
-            link.download = 'aca_map.jpeg';
-            link.href = canvas.toDataURL('image/jpeg', 1.0);
-            link.click();
-            hideElems.forEach(e=>{ if(e){ e.style.display = e.dataset._prevDisplay || ''; }});
-          });
-        });
-      })();
-
     }
   } catch (err) {
     console.error("[ACA] init failed:", err);
