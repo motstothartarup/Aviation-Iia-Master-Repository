@@ -1,9 +1,4 @@
 # scripts/build_map.py
-# ACA Americas map with:
-#  - target airport highlighted (red outline), others plain fills
-#  - optional highlighting for a set of IATA codes
-#  - labels "IATA, LEVEL" or "IATA, N/A" for unknowns
-#  - custom legend, no Leaflet legend and no zoom controls
 
 import io
 import os
@@ -43,35 +38,26 @@ STROKE = 2
 
 LABEL_GAP_PX = 10  # vertical gap between dot and label
 
-# --- Zoom tuning knobs ---
+# Zoom / interaction
 ZOOM_SNAP = 0.10
 ZOOM_DELTA = 0.75
 WHEEL_PX_PER_ZOOM = 100
 WHEEL_DEBOUNCE_MS = 10
 
-# --- Position DB knobs ---
 DB_MAX_HISTORY = 200
 UPDATE_DEBOUNCE_MS = 120
 
-# --- Stacking behavior ---
 STACK_ON_AT_Z = 7.5
-HIDE_LABELS_BELOW_Z = 4.4  # labels visible at >= 4.4
-
-# --- Grouping distance in miles ---
+HIDE_LABELS_BELOW_Z = 4.4
 GROUP_RADIUS_MILES = 30.0
-
-# --- Visual tweak for stacked rows ---
 STACK_ROW_GAP_PX = 6
 
-# default standalone output
 OUT_DIR = "docs"
 OUT_FILE = os.path.join(OUT_DIR, "aca_map.html")
 
-# read target + composite list from the grid output
 GRID_DEFAULT_PATH = os.path.join("docs", "grid.html")
 
 
-# ---------- helpers ----------
 def write_error_page(msg: str) -> None:
     os.makedirs(OUT_DIR, exist_ok=True)
     updated = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
@@ -106,7 +92,6 @@ def fetch_aca_html(timeout: int = 45) -> str:
 
 
 def parse_aca_table(html: str) -> pd.DataFrame:
-    """Return dataframe with: iata, airport, country, region, aca_level, region4."""
     soup = BeautifulSoup(html, "lxml")
     dfs = []
 
@@ -169,8 +154,8 @@ def load_coords() -> pd.DataFrame:
 def _parse_grid_composite7(grid_html_path: str = GRID_DEFAULT_PATH):
     """
     Return (target_iata, composite_list_of_7) by reading docs/grid.html.
-    Target parsed from the origin chip, with header text as a fallback.
-    Composite from the row whose .cat contains 'composite'.
+
+    Target parsed from the origin chip (preferred) or header text as fallback.
     """
     try:
         if not os.path.exists(grid_html_path):
@@ -181,12 +166,10 @@ def _parse_grid_composite7(grid_html_path: str = GRID_DEFAULT_PATH):
 
         target = None
 
-        # First choice: origin chip code
         origin_code = soup.select_one(".chip.origin .code")
         if origin_code:
             target = origin_code.get_text(strip=True).upper()
 
-        # Fallback: header text "LAX — ...".
         if not target:
             h = soup.select_one(".header h3")
             if h:
@@ -223,32 +206,36 @@ def _parse_grid_composite7(grid_html_path: str = GRID_DEFAULT_PATH):
         return None, []
 
 
-# ---------- main ----------
 def build_map(highlight_iatas=None) -> folium.Map:
     """
     Return a folium.Map for ACA airports in the Americas.
 
-    highlight_iatas: optional set/list of IATA codes to emphasize.
-      - Target airport (origin chip in grid) gets a red outline.
-      - Other airports get filled circles with no visible outline.
-    If highlight_iatas is None, we read [target + composite-7] from docs/grid.html.
+    Target airport (origin chip from the grid) always has the red outline.
+    All others are filled circles with no visible outline.
     """
     parsed_target, parsed_comp = _parse_grid_composite7(GRID_DEFAULT_PATH)
 
+    # If nothing explicitly passed, default to [target + composite7]
     if not highlight_iatas:
         if parsed_target and parsed_comp:
             highlight_iatas = [parsed_target] + parsed_comp
-        else:
-            print("[WARN] Could not parse Composite 7 from grid; proceeding without highlight set.", file=sys.stderr)
 
+    # Build and normalize highlight list
     highlight_list = [str(x).upper() for x in (highlight_iatas or [])]
 
-    # Ensure chosen is the origin chip from the grid when available
-    if parsed_target and parsed_target.upper() in highlight_list:
-        chosen = parsed_target.upper()
-    else:
-        chosen = highlight_list[0] if highlight_list else None
+    # NEW: force target IATA (from the grid) to be first in the list
+    if parsed_target:
+        pt = parsed_target.upper()
+        if highlight_list:
+            if pt in highlight_list:
+                highlight_list = [pt] + [c for c in highlight_list if c != pt]
+            else:
+                highlight_list = [pt] + highlight_list
+        else:
+            highlight_list = [pt]
 
+    # Target (red ring) is always the first entry
+    chosen = highlight_list[0] if highlight_list else None
     highlight = set(highlight_list)
 
     aca_html = fetch_aca_html()
@@ -263,7 +250,7 @@ def build_map(highlight_iatas=None) -> folium.Map:
     if amer.empty:
         raise RuntimeError("No rows for the Americas after joining coordinates.")
 
-    # Guarantee all requested highlight codes can render, even if not ACA-scored
+    # Ensure all highlighted codes can render, even if not ACA-scored
     if highlight:
         present_set = set(amer["iata"])
         missing = [c for c in highlight_list if c not in present_set]
@@ -284,7 +271,6 @@ def build_map(highlight_iatas=None) -> folium.Map:
                 amer = pd.concat([amer, extra[keep_cols]], ignore_index=True, sort=False)
                 amer = amer.drop_duplicates(subset=["iata"], keep="first")
 
-    # Plot only the highlight set if present
     plot_df = amer[amer["iata"].isin(highlight)].copy() if highlight else amer.copy()
     if highlight:
         order_map = {code: i for i, code in enumerate(highlight_list)}
@@ -294,7 +280,6 @@ def build_map(highlight_iatas=None) -> folium.Map:
     center_lat = float(plot_df["latitude_deg"].mean())
     center_lon = float(plot_df["longitude_deg"].mean())
 
-    # No zoomControl, we do our own zoom behavior via JS
     m = folium.Map(
         tiles="CartoDB Positron",
         zoomControl=False,
@@ -307,7 +292,6 @@ def build_map(highlight_iatas=None) -> folium.Map:
 
     updated = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
 
-    # footer + stack styles
     badge_html = (
         r"""
 <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate"/>
@@ -328,7 +312,6 @@ def build_map(highlight_iatas=None) -> folium.Map:
 
 .leaflet-tooltip.iata-tt .ttxt { display:inline-block; line-height:1.05; }
 
-/* legacy spans suppressed (we now show "IATA, LEVEL" text only) */
 .leaflet-tooltip.iata-tt .lvlchip { display:none; }
 .leaflet-tooltip.iata-tt .iata    { display:none; }
 
@@ -340,7 +323,6 @@ def build_map(highlight_iatas=None) -> folium.Map:
   font:12px "Open Sans","Helvetica Neue",Arial,sans-serif; color:#485260;
 }
 
-/* stacked label list */
 .iata-stack{
   position:absolute; z-index:9998; pointer-events:none;
   background:transparent; border:0; box-shadow:none;
@@ -350,7 +332,6 @@ def build_map(highlight_iatas=None) -> folium.Map:
 }
 .iata-stack .row{ line-height:1.0; margin: __ROWGAP__px 0; }
 
-/* Legend box (upper left) */
 .legend-box{
   position:absolute; left:12px; top:12px; z-index:9999;
   background:#fff; padding:6px 8px; border-radius:8px;
@@ -374,7 +355,6 @@ def build_map(highlight_iatas=None) -> folium.Map:
     )
     m.get_root().html.add_child(folium.Element(badge_html))
 
-    # custom legend (simple circles, upper-left)
     legend_items = "".join(
         '<div class="row"><span class="dot" style="background:{color}"></span>{lvl}</div>'.format(
             color=PALETTE.get(lvl, "#666"), lvl=lvl
@@ -389,25 +369,21 @@ def build_map(highlight_iatas=None) -> folium.Map:
     )
     m.get_root().html.add_child(folium.Element(legend_html))
 
-    # dots + permanent tooltips
     for _, r in plot_df.iterrows():
         lat, lon = float(r.latitude_deg), float(r.longitude_deg)
         size_key = r.get("size", "small")
         base_radius = RADIUS.get(size_key, 6)
 
         if chosen and r.iata == chosen:
-            # Target airport: red outline
             radius = base_radius * 1.5
             stroke_color = "#E74C3C"
             stroke_weight = max(STROKE, 3)
         else:
-            # Other airports: no visible outline
             radius = base_radius * 1.5
             stroke_color = "rgba(0,0,0,0)"
             stroke_weight = 0
 
         fill_opacity = 0.95
-        add_label = True
         offset_y = -(radius + max(stroke_weight, 0) + max(LABEL_GAP_PX, 1))
 
         lvl = r.aca_level if r.aca_level in PALETTE else "Unknown"
@@ -428,31 +404,28 @@ def build_map(highlight_iatas=None) -> folium.Map:
             ),
         )
 
-        if add_label:
-            if lvl == "Unknown":
-                label_text = f"{r.iata}, N/A"
-            else:
-                lvl_badge = LEVEL_BADGE.get(lvl, "")
-                label_text = f"{r.iata}, {lvl_badge}"
-            label_html = f'<div class="ttxt">{label_text}</div>'
-            dot.add_child(
-                folium.Tooltip(
-                    label_html,
-                    permanent=True,
-                    direction="top",
-                    offset=(0, offset_y),
-                    sticky=False,
-                    class_name=f"iata-tt size-{size_key} tt-{r.iata}",
-                    parse_html=True,
-                )
+        if lvl == "Unknown":
+            label_text = f"{r.iata}, N/A"
+        else:
+            label_text = f"{r.iata}, {LEVEL_BADGE.get(lvl, '')}"
+
+        label_html = f'<div class="ttxt">{label_text}</div>'
+        dot.add_child(
+            folium.Tooltip(
+                label_html,
+                permanent=True,
+                direction="top",
+                offset=(0, offset_y),
+                sticky=False,
+                class_name=f"iata-tt size-{size_key} tt-{r.iata}",
+                parse_html=True,
             )
+        )
 
         dot.add_to(groups[lvl])
 
-    # No LayerControl, to avoid duplicate legend
-    # folium.LayerControl(collapsed=False).add_to(m)
+    # No Leaflet layer control (we use our own legend)
 
-    # JS: zoom tuning + stacking (zoom meter removed, but logic otherwise preserved)
     js = r"""
 (function(){
   try {
