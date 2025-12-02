@@ -2,8 +2,8 @@
 # ACA Americas map with:
 #  - target airport highlighted (red outline), others plain fills
 #  - optional highlighting for a set of IATA codes
-#  - labels "IATA, LEVEL" or "IATA, Unscored" for unknowns
-#  - custom legend and zoom meter, no extra Leaflet legend or export button
+#  - labels "IATA, LEVEL" or "IATA, N/A" for unknowns
+#  - custom legend, no Leaflet legend and no zoom controls
 
 import io
 import os
@@ -43,7 +43,7 @@ STROKE = 2
 
 LABEL_GAP_PX = 10  # vertical gap between dot and label
 
-# --- Zoom tuning knobs (triple speed) ---
+# --- Zoom tuning knobs ---
 ZOOM_SNAP = 0.10
 ZOOM_DELTA = 0.75
 WHEEL_PX_PER_ZOOM = 100
@@ -169,7 +169,8 @@ def load_coords() -> pd.DataFrame:
 def _parse_grid_composite7(grid_html_path: str = GRID_DEFAULT_PATH):
     """
     Return (target_iata, composite_list_of_7) by reading docs/grid.html.
-    Target parsed from header "<h3>JFK — ...</h3>", composite from the row whose .cat contains 'composite'.
+    Target parsed from the origin chip, with header text as a fallback.
+    Composite from the row whose .cat contains 'composite'.
     """
     try:
         if not os.path.exists(grid_html_path):
@@ -179,10 +180,18 @@ def _parse_grid_composite7(grid_html_path: str = GRID_DEFAULT_PATH):
         soup = BeautifulSoup(html, "lxml")
 
         target = None
-        h = soup.select_one(".header h3")
-        if h:
-            txt = (h.get_text() or "").strip()
-            target = (txt.split("—", 1)[0] or "").strip().upper()
+
+        # First choice: origin chip code
+        origin_code = soup.select_one(".chip.origin .code")
+        if origin_code:
+            target = origin_code.get_text(strip=True).upper()
+
+        # Fallback: header text "LAX — ...".
+        if not target:
+            h = soup.select_one(".header h3")
+            if h:
+                txt = (h.get_text() or "").strip()
+                target = (txt.split("—", 1)[0] or "").strip().upper()
 
         comp_row = None
         for row in soup.select(".container .row"):
@@ -220,7 +229,7 @@ def build_map(highlight_iatas=None) -> folium.Map:
     Return a folium.Map for ACA airports in the Americas.
 
     highlight_iatas: optional set/list of IATA codes to emphasize.
-      - Target airport is taken from the grid HTML and gets a red outline.
+      - Target airport (origin chip in grid) gets a red outline.
       - Other airports get filled circles with no visible outline.
     If highlight_iatas is None, we read [target + composite-7] from docs/grid.html.
     """
@@ -233,7 +242,8 @@ def build_map(highlight_iatas=None) -> folium.Map:
             print("[WARN] Could not parse Composite 7 from grid; proceeding without highlight set.", file=sys.stderr)
 
     highlight_list = [str(x).upper() for x in (highlight_iatas or [])]
-    # Ensure the chosen airport is the grid target when possible
+
+    # Ensure chosen is the origin chip from the grid when available
     if parsed_target and parsed_target.upper() in highlight_list:
         chosen = parsed_target.upper()
     else:
@@ -284,9 +294,10 @@ def build_map(highlight_iatas=None) -> folium.Map:
     center_lat = float(plot_df["latitude_deg"].mean())
     center_lon = float(plot_df["longitude_deg"].mean())
 
+    # No zoomControl, we do our own zoom behavior via JS
     m = folium.Map(
         tiles="CartoDB Positron",
-        zoomControl=True,
+        zoomControl=False,
         prefer_canvas=True,
         location=[center_lat, center_lon],
         zoom_start=4.7,
@@ -296,7 +307,7 @@ def build_map(highlight_iatas=None) -> folium.Map:
 
     updated = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
 
-    # footer + zoom meter + stack styles
+    # footer + stack styles
     badge_html = (
         r"""
 <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate"/>
@@ -328,13 +339,6 @@ def build_map(highlight_iatas=None) -> folium.Map:
   box-shadow:0 2px 8px rgba(0,0,0,.12);
   font:12px "Open Sans","Helvetica Neue",Arial,sans-serif; color:#485260;
 }
-.zoom-meter{
-  position:absolute; left:12px; top:112px; z-index:9999;
-  background:#fff; padding:6px 8px; border-radius:8px;
-  box-shadow:0 2px 8px rgba(0,0,0,.12);
-  font:12px "Open Sans","Helvetica Neue",Arial,sans-serif; color:#485260;
-  user-select:none; pointer-events:none;
-}
 
 /* stacked label list */
 .iata-stack{
@@ -346,9 +350,9 @@ def build_map(highlight_iatas=None) -> folium.Map:
 }
 .iata-stack .row{ line-height:1.0; margin: __ROWGAP__px 0; }
 
-/* Legend box */
+/* Legend box (upper left) */
 .legend-box{
-  position:absolute; left:12px; top:170px; z-index:9999;
+  position:absolute; left:12px; top:12px; z-index:9999;
   background:#fff; padding:6px 8px; border-radius:8px;
   box-shadow:0 2px 8px rgba(0,0,0,.12);
   font:12px "Open Sans","Helvetica Neue",Arial,sans-serif; color:#485260;
@@ -364,14 +368,13 @@ def build_map(highlight_iatas=None) -> folium.Map:
 }
 </style>
 <div class="last-updated">Last updated: __UPDATED__</div>
-<div id="zoomMeter" class="zoom-meter">Zoom: --%</div>
 """
         .replace("__UPDATED__", updated)
         .replace("__ROWGAP__", str(int(STACK_ROW_GAP_PX)))
     )
     m.get_root().html.add_child(folium.Element(badge_html))
 
-    # custom legend (simple circles)
+    # custom legend (simple circles, upper-left)
     legend_items = "".join(
         '<div class="row"><span class="dot" style="background:{color}"></span>{lvl}</div>'.format(
             color=PALETTE.get(lvl, "#666"), lvl=lvl
@@ -427,7 +430,7 @@ def build_map(highlight_iatas=None) -> folium.Map:
 
         if add_label:
             if lvl == "Unknown":
-                label_text = f"{r.iata}, Unscored"
+                label_text = f"{r.iata}, N/A"
             else:
                 lvl_badge = LEVEL_BADGE.get(lvl, "")
                 label_text = f"{r.iata}, {lvl_badge}"
@@ -446,11 +449,10 @@ def build_map(highlight_iatas=None) -> folium.Map:
 
         dot.add_to(groups[lvl])
 
-    # Remove Leaflet LayerControl to avoid duplicate legend / "cartodbpositron" entry
-    # (we keep only the custom legend box above)
+    # No LayerControl, to avoid duplicate legend
     # folium.LayerControl(collapsed=False).add_to(m)
 
-    # JS: zoom meter + clustering (unchanged except export removed)
+    # JS: zoom tuning + stacking (zoom meter removed, but logic otherwise preserved)
     js = r"""
 (function(){
   try {
@@ -490,16 +492,6 @@ def build_map(highlight_iatas=None) -> folium.Map:
         if (map.scrollWheelZoom){ map.scrollWheelZoom.disable(); map.scrollWheelZoom.enable(); }
       }
       tuneWheel();
-
-      const meter = document.getElementById('zoomMeter');
-      function updateMeter(){
-        if (!meter) return;
-        const z = map.getZoom();
-        const minZ = (map.getMinZoom && map.getMinZoom()) || 0;
-        let maxZ = (map.getMaxZoom && map.getMaxZoom()); if (maxZ == null) maxZ = 19;
-        const pct = Math.round(((z - minZ)/Math.max(1e-6, (maxZ - minZ))) * 100);
-        meter.textContent = "Zoom: " + pct + "% (z=" + z.toFixed(2) + ")";
-      }
 
       function rectBaseForPane(thePane){
         const prect = thePane.getBoundingClientRect();
@@ -613,7 +605,6 @@ def build_map(highlight_iatas=None) -> folium.Map:
       }
 
       function updateAll(){
-        updateMeter();
         requestAnimationFrame(()=>requestAnimationFrame(()=>{
           const items = collectItems();
           applyClustering(items);
