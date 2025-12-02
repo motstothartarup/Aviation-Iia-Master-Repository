@@ -160,6 +160,13 @@
       "wsize": 85.0,
       "wgrowth": 5.0,
       "path": "runs/JFK-85-5-1763572612"
+    },
+    {
+      "ts": 1764709268,
+      "iata": "BOS",
+      "wsize": 100.0,
+      "wgrowth": 0.0,
+      "path": "runs/BOS-100-0-1764709268"
     }
   ]
 }
