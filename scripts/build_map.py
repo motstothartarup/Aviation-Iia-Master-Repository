@@ -38,7 +38,6 @@ STROKE = 2
 
 LABEL_GAP_PX = 10  # vertical gap between dot and label
 
-# Zoom / interaction
 ZOOM_SNAP = 0.10
 ZOOM_DELTA = 0.75
 WHEEL_PX_PER_ZOOM = 100
@@ -166,16 +165,19 @@ def _parse_grid_composite7(grid_html_path: str = GRID_DEFAULT_PATH):
 
         target = None
 
+        # Preferred: origin chip
         origin_code = soup.select_one(".chip.origin .code")
         if origin_code:
             target = origin_code.get_text(strip=True).upper()
 
+        # Fallback: header text "LAX — ..."
         if not target:
             h = soup.select_one(".header h3")
             if h:
                 txt = (h.get_text() or "").strip()
                 target = (txt.split("—", 1)[0] or "").strip().upper()
 
+        # Composite row
         comp_row = None
         for row in soup.select(".container .row"):
             cat = row.select_one(".cat")
@@ -210,31 +212,34 @@ def build_map(highlight_iatas=None) -> folium.Map:
     """
     Return a folium.Map for ACA airports in the Americas.
 
-    Target airport (origin chip from the grid) always has the red outline.
+    The origin airport from the grid is ALWAYS the only airport with a red outline.
     All others are filled circles with no visible outline.
     """
     parsed_target, parsed_comp = _parse_grid_composite7(GRID_DEFAULT_PATH)
 
-    # If nothing explicitly passed, default to [target + composite7]
-    if not highlight_iatas:
-        if parsed_target and parsed_comp:
-            highlight_iatas = [parsed_target] + parsed_comp
+    # Build a merged, ordered highlight list:
+    #   1) target from grid (if present)
+    #   2) composite-7 from grid
+    #   3) any explicit highlight_iatas passed in
+    base_codes = []
 
-    # Build and normalize highlight list
-    highlight_list = [str(x).upper() for x in (highlight_iatas or [])]
-
-    # NEW: force target IATA (from the grid) to be first in the list
     if parsed_target:
-        pt = parsed_target.upper()
-        if highlight_list:
-            if pt in highlight_list:
-                highlight_list = [pt] + [c for c in highlight_list if c != pt]
-            else:
-                highlight_list = [pt] + highlight_list
-        else:
-            highlight_list = [pt]
+        base_codes.append(parsed_target.upper())
 
-    # Target (red ring) is always the first entry
+    for c in (parsed_comp or []):
+        base_codes.append(str(c).upper())
+
+    if highlight_iatas:
+        for c in highlight_iatas:
+            base_codes.append(str(c).upper())
+
+    # Deduplicate while preserving order
+    highlight_list = []
+    for c in base_codes:
+        if c and c not in highlight_list:
+            highlight_list.append(c)
+
+    # If we still somehow have nothing, just do not highlight
     chosen = highlight_list[0] if highlight_list else None
     highlight = set(highlight_list)
 
@@ -323,6 +328,7 @@ def build_map(highlight_iatas=None) -> folium.Map:
   font:12px "Open Sans","Helvetica Neue",Arial,sans-serif; color:#485260;
 }
 
+/* stacked labels */
 .iata-stack{
   position:absolute; z-index:9998; pointer-events:none;
   background:transparent; border:0; box-shadow:none;
@@ -332,6 +338,7 @@ def build_map(highlight_iatas=None) -> folium.Map:
 }
 .iata-stack .row{ line-height:1.0; margin: __ROWGAP__px 0; }
 
+/* legend */
 .legend-box{
   position:absolute; left:12px; top:12px; z-index:9999;
   background:#fff; padding:6px 8px; border-radius:8px;
@@ -374,6 +381,7 @@ def build_map(highlight_iatas=None) -> folium.Map:
         size_key = r.get("size", "small")
         base_radius = RADIUS.get(size_key, 6)
 
+        # Only the chosen airport (target) gets a visible red outline.
         if chosen and r.iata == chosen:
             radius = base_radius * 1.5
             stroke_color = "#E74C3C"
@@ -404,6 +412,7 @@ def build_map(highlight_iatas=None) -> folium.Map:
             ),
         )
 
+        # Label text: IATA, badge or N/A
         if lvl == "Unknown":
             label_text = f"{r.iata}, N/A"
         else:
@@ -424,8 +433,7 @@ def build_map(highlight_iatas=None) -> folium.Map:
 
         dot.add_to(groups[lvl])
 
-    # No Leaflet layer control (we use our own legend)
-
+    # JS: clustering only (no zoom meter, no export)
     js = r"""
 (function(){
   try {
@@ -560,7 +568,6 @@ def build_map(highlight_iatas=None) -> folium.Map:
           div.style.left = left + "px";
           div.style.top  = top  + "px";
         });
-        return { iatas: sorted.map(i=>items[i].iata) };
       }
 
       function applyClustering(items){
