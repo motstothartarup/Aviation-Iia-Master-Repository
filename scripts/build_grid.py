@@ -4,7 +4,7 @@
 # Exposes build_grid(...). Also runnable as a script to write docs/grid.html.
 
 import os, re, argparse
-import numpy as np  # kept for compatibility
+import numpy as np  # kept in case you later extend logic
 import pandas as pd
 
 CSS = """
@@ -39,7 +39,7 @@ CSS = """
 }
 .grid{
   display:grid;
-  grid-template-columns:repeat(5,minmax(140px,1fr)); /* 5 columns -> 3 rows for 15 tiles */
+  grid-template-columns:repeat(5,minmax(140px,1fr)); /* 5 columns, 3 rows for 15 tiles */
   gap:var(--gap);
 }
 .chip{
@@ -136,15 +136,12 @@ def _load_aci(excel_path: str) -> pd.DataFrame:
     df["total_passengers"] = pd.to_numeric(df[c_total], errors="coerce")
     df["yoy_growth_pct"]   = pd.to_numeric(df[c_yoy], errors="coerce") if c_yoy else np.nan
 
-    # Keep only rows with usable identifiers and throughput
     df = df.dropna(subset=["iata", "state", "total_passengers"]).reset_index(drop=True)
 
     return df
 
 def _dev(val, target):
-    """
-    Percentage deviation vs target, as a percent of target.
-    """
+    """Percentage deviation vs target, as a percent of target."""
     if pd.isna(val) or pd.isna(target):
         return ""
     if abs(target) < 1e-9:
@@ -171,7 +168,7 @@ def _grid_html(rows, metric_col, target_val, origin_iata):
             f"{dev_html}"
             f"</div>"
         )
-    return "".join(chips)  # exactly top-N (no fillers)
+    return "".join(chips)
 
 def _nearest_sets(df, iata, topn=15):
     """
@@ -192,20 +189,14 @@ def _nearest_sets(df, iata, topn=15):
     union = {iata} | set(r_total["iata"])
     return t, sets, union
 
-def build_grid(excel_path: str,
-               iata: str,
-               wsize: float,
-               wgrowth_unused: float,
-               out_html: str | None = None):
+def build_grid(
+    excel_path: str,
+    iata: str,
+    out_html: str | None = None,
+):
     """
     Build a throughput-only similarity set for a target IATA.
-
-    Arguments kept compatible:
-      - wsize and wgrowth_unused are accepted but no longer affect the selection.
     """
-    if wsize > 100:
-        raise ValueError("wsize must be <= 100")
-
     df = _load_aci(excel_path)
     if df[df["iata"] == iata].empty:
         raise ValueError(f"IATA '{iata}' not found in ACI file.")
@@ -216,15 +207,12 @@ def build_grid(excel_path: str,
 
     target_total = df.loc[df["iata"] == target_iata, "total_passengers"].iloc[0]
 
-    # Build grid (15 chips) for total passengers
     total_html = _grid_html(r_total, "total_passengers", target_total, target_iata)
 
-    # Top header text (red-circled area in your screenshot)
     airport_name = str(target.get("name", target_iata))
     header_title = f"{airport_name} – overview of airports with similar throughput."
     header_meta  = f"Target: {target_iata} – {_fmt_int(target_total)} passengers"
 
-    # Document title (browser tab)
     doc_title = f"{target_iata} – Airports with similar passenger throughput"
 
     header = f"""
@@ -255,31 +243,16 @@ def build_grid(excel_path: str,
         "union": sorted(list(union)),
         "nearest": nearest_list,
         "target": dict(target),
-        # Weights kept for backward-compat reporting; logically size/share is now moot.
-        "weights": (float(wsize), float(100 - wsize)),
     }
 
 if __name__ == "__main__":
     ap = argparse.ArgumentParser()
     ap.add_argument("--excel", default="data/ACI_2024_NA_Traffic.xlsx")
     ap.add_argument("--iata", required=True)
-    ap.add_argument(
-        "--wsize",
-        type=float,
-        required=True,
-        help="Weight for size (0-100). Kept for backward-compat; logic is throughput-only.",
-    )
-    ap.add_argument(
-        "--wgrowth",
-        type=float,
-        required=False,
-        default=0.0,
-        help="Ignored. Present for backward-compat.",
-    )
     ap.add_argument("--out", default="docs/grid.html")
     a = ap.parse_args()
 
-    res = build_grid(a.excel, a.iata.upper(), a.wsize, a.wgrowth, a.out)
+    res = build_grid(a.excel, a.iata.upper(), out_html=a.out)
 
     print("Nearest airports by throughput (excluding target):")
     print(", ".join(res["nearest"]))
