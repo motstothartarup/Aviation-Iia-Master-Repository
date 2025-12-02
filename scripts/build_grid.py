@@ -1,54 +1,37 @@
 # scripts/build_grid.py
-# Output: Competitor Grid (throughput-only) from your ACI Excel.
-# For a given target IATA, finds the closest airports by total passengers.
+# Output: Throughput-only list and grid from your ACI Excel.
+# For a given target IATA, finds the 15 closest airports by total passengers.
 # Exposes build_grid(...). Also runnable as a script to write docs/grid.html.
 
 import os, re, argparse
-import numpy as np
+import numpy as np  # kept, even if lightly used, for compatibility
 import pandas as pd
-
-# Region colors are left in place for chip styling, but we no longer
-# compute or use any region buckets in the logic itself.
-REGIONS_4 = {
-    "West":     {"WA","OR","CA","NV","ID","MT","WY","UT","AZ","CO","NM","AK","HI"},
-    "Midwest":  {"ND","SD","NE","KS","MN","IA","MO","WI","IL","MI","IN","OH"},
-    "South":    {"OK","TX","AR","LA","KY","TN","MS","AL","GA","FL","SC","NC","VA","WV","MD","DC","DE"},
-    "Northeast":{"PA","NJ","NY","CT","RI","MA","VT","NH","ME"},
-}
-
-REGION_COLORS = {
-    "West":      "#1957A6",
-    "Midwest":   "#10B981",
-    "South":     "#F59E0B",
-    "Northeast": "#7E57C2",
-    "Unknown":   "#9aa2af",
-}
 
 CSS = """
 <style>
 :root{
   --gap:10px; --radius:14px; --ink:#111827; --muted:#6b7280; --border:#e5e7eb; --chipbg:#f6f8fa;
 }
-.container{max-width:1100px;margin:14px auto 18px auto;padding:0 10px;font-family:Inter,system-ui,Arial}
+.container{max-width:820px;margin:14px auto 18px auto;padding:0 10px;font-family:Inter,system-ui,Arial}
 .header h3{margin:0 0 4px 0}
 .header .meta{color:var(--muted)}
 .row{display:grid;grid-template-columns:240px 1fr;column-gap:16px;align-items:start;margin:10px 0}
 .cat{font-weight:800;line-height:1.2}
 .cat .sub{display:block;color:var(--muted);font-weight:500;font-size:12px;margin-top:2px}
-.grid{display:grid;grid-template-columns:repeat(7,minmax(84px,1fr));gap:var(--gap)} /* 7 columns */
+.grid{display:grid;grid-template-columns:repeat(5,minmax(84px,1fr));gap:var(--gap)} /* 5 columns -> 3 rows for 15 chips */
 .chip{
-  display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:56px;
-  padding:8px 10px;border:1px solid #9aa2af;border-radius:var(--radius);background:var(--chipbg);
-  color:var(--ink);text-align:center; position:relative;
+  display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:64px;
+  padding:8px 10px;border:1px solid #d1d5db;border-radius:var(--radius);background:var(--chipbg);
+  color:var(--ink);text-align:center;position:relative;
 }
 .chip .code{font-weight:800;line-height:1.05}
-.chip .dev{font-size:11px;color:var(--muted);line-height:1.05;margin-top:2px}
+.chip .pax{font-size:11px;color:var(--ink);line-height:1.05;margin-top:2px}
+.chip .dev{font-size:11px;color:var(--muted);line-height:1.05;margin-top:1px}
 .chip.origin{box-shadow:0 0 0 2px rgba(231,76,60,.22) inset;border-color:#E74C3C}
-.dot{ width:10px;height:10px;border-radius:999px;position:absolute;top:8px;left:8px; }
 </style>
 """
 
-def _norm(s): 
+def _norm(s):
     return re.sub(r"\s+"," ",str(s)).strip().lower()
 
 def _pick(df, cands):
@@ -77,7 +60,6 @@ def _load_aci(excel_path: str) -> pd.DataFrame:
       - name
       - state
       - total_passengers
-      - region4 (now always 'Unknown' – no region mapping logic)
     """
     raw = pd.read_excel(excel_path, header=2)
     df = raw.rename(columns={c: _norm(c) for c in raw.columns}).copy()
@@ -109,49 +91,41 @@ def _load_aci(excel_path: str) -> pd.DataFrame:
     # Keep only rows with usable identifiers and throughput
     df = df.dropna(subset=["iata", "state", "total_passengers"]).reset_index(drop=True)
 
-    # We no longer bucket airports into regions for this task.
-    df["region4"] = "Unknown"
-
     return df
 
-def _dev(val, target, pct):
+def _dev(val, target):
     """
-    Simple deviation display helper.
-    For throughput, pct=False, so this is relative % difference vs target.
+    Percentage deviation vs target, as a percent of target.
     """
     if pd.isna(val) or pd.isna(target):
         return ""
-    diff = float(val) - float(target)
-    if pct:
-        if abs(target) < 1e-9:
-            return f"{diff:+.1f}pp"
-        return f"{(diff / target) * 100:+.1f}%"
     if abs(target) < 1e-9:
         return ""
-    return f"{(diff / target) * 100:+.1f}%"
+    diff_pct = (float(val) - float(target)) / float(target) * 100.0
+    return _fmt_pct(diff_pct, signed=True, decimals=1)
 
-def _chip_color_style(region: str) -> str:
-    color = REGION_COLORS.get(region, REGION_COLORS["Unknown"])
-    return f"border-color:{color};"
-
-def _grid_html(rows, metric_col, target_val, pct_metric, origin_iata):
+def _grid_html(rows, metric_col, target_val, origin_iata):
     chips = []
     for _, r in rows.iterrows():
         code = str(r["iata"])
-        dev  = _dev(r[metric_col], target_val, pct_metric)
-        dev_html = f"<span class='dev'>{dev}</span>" if dev else "<span class='dev'>&nbsp;</span>"
+        pax_val = r[metric_col]
+        pax_txt = _fmt_int(pax_val)
+        dev_txt = _dev(pax_val, target_val)
+
+        pax_html = f"<span class='pax'>{pax_txt} passengers</span>"
+        dev_html = f"<span class='dev'>{dev_txt} vs target</span>" if dev_txt else "<span class='dev'>&nbsp;</span>"
+
         cls = "chip origin" if code == origin_iata else "chip"
-        region = r.get("region4", "Unknown")
-        dot_color = REGION_COLORS.get(region, REGION_COLORS["Unknown"])
-        style = _chip_color_style(region)
         chips.append(
-            f"<div class='{cls}' data-region='{region}' style='{style}'>"
-            f"<span class='dot' style='background:{dot_color}' aria-hidden='true'></span>"
-            f"<span class='code'>{code}</span>{dev_html}</div>"
+            f"<div class='{cls}'>"
+            f"<span class='code'>{code}</span>"
+            f"{pax_html}"
+            f"{dev_html}"
+            f"</div>"
         )
     return "".join(chips)  # exactly top-N (no fillers)
 
-def _nearest_sets(df, iata, w_size, w_share, topn=7):
+def _nearest_sets(df, iata, topn=15):
     """
     Throughput-only similarity.
     Finds the top-N airports with total passengers closest to the target.
@@ -168,7 +142,6 @@ def _nearest_sets(df, iata, w_size, w_share, topn=7):
     )
 
     sets = {"total": r_total}
-    # Keep union tied to TOTAL only
     union = {iata} | set(r_total["iata"])
     return t, sets, union
 
@@ -178,12 +151,11 @@ def build_grid(excel_path: str,
                wgrowth_unused: float,
                out_html: str | None = None):
     """
-    Build a throughput-only competitor set for a target IATA.
+    Build a throughput-only similarity set for a target IATA.
 
     Arguments kept compatible:
       - wsize and wgrowth_unused are accepted but no longer affect the selection.
     """
-    # Keep argument validation light; wsize is no longer functionally used.
     if wsize > 100:
         raise ValueError("wsize must be <= 100")
 
@@ -191,32 +163,36 @@ def build_grid(excel_path: str,
     if df[df["iata"] == iata].empty:
         raise ValueError(f"IATA '{iata}' not found in ACI file.")
 
-    # wshare kept for signature compatibility, but not used in logic now
-    wshare = 100 - wsize
-
-    target, sets, union = _nearest_sets(df, iata, wsize, wshare, topn=7)
+    target_iata = iata.upper()
+    target, sets, union = _nearest_sets(df, target_iata, topn=15)
     r_total = sets["total"]
 
-    # Build grid (7 chips) for total passengers
-    target_total = df.loc[df["iata"] == iata, "total_passengers"].iloc[0]
-    total_html = _grid_html(r_total, "total_passengers", target_total, False, iata)
+    # Build grid (15 chips) for total passengers
+    target_total = df.loc[df["iata"] == target_iata, "total_passengers"].iloc[0]
+    total_html = _grid_html(r_total, "total_passengers", target_total, target_iata)
 
     # Reference values for TARGET airport
-    ref_total = f"{target['iata']}: {_fmt_int(target['total_passengers'])}"
+    ref_total = f"{target_iata}: {_fmt_int(target_total)} passengers"
+
+    # Titles and labels
+    doc_title = f"{target_iata} \u2013 Insights on passenger throughput versus ACA scoring"
+    header_title = doc_title
+    cat_label = f"Airports with similar passenger throughput to {target_iata}"
 
     header = f"""
     <div class="header">
-      <h3>{target['iata']} — {target['name']}</h3>
-      <div class="meta">State: {target['state']} · Pax (total): {_fmt_int(target['total_passengers'])}</div>
+      <h3>{header_title}</h3>
+      <div class="meta">Total passengers at {target_iata}: {_fmt_int(target_total)}</div>
     </div>"""
 
-    html = f"""<!doctype html><meta charset="utf-8"><title>Competitor Grid</title>
+    html = f"""<!doctype html><meta charset="utf-8">
+<title>{doc_title}</title>
 {CSS}
 <div class="container">
   {header}
 
   <div class="row">
-    <div class="cat">Total passengers (int’l + dom)<span class="sub">Target — {ref_total}</span></div>
+    <div class="cat">{cat_label}<span class="sub">Target \u2013 {ref_total}</span></div>
     <div class="grid">{total_html}</div>
   </div>
 </div>"""
