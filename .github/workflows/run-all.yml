@@ -1,20 +1,11 @@
 name: Build grid + ACA table (HTML)
-
 on:
   workflow_dispatch:
     inputs:
       iata:
-        description: "IATA code (e.g., LAX)"
+        description: 'IATA code (e.g., LAX)'
         required: true
-        default: "LAX"
-      wsize:
-        description: "Weight: total passengers"
-        required: true
-        default: "85"
-      wgrowth:
-        description: "Weight: growth"
-        required: true
-        default: "5"
+        default: 'LAX'
 
 permissions:
   contents: write
