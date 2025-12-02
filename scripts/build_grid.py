@@ -4,30 +4,79 @@
 # Exposes build_grid(...). Also runnable as a script to write docs/grid.html.
 
 import os, re, argparse
-import numpy as np  # kept, even if lightly used, for compatibility
+import numpy as np  # kept for compatibility
 import pandas as pd
 
 CSS = """
 <style>
 :root{
-  --gap:10px; --radius:14px; --ink:#111827; --muted:#6b7280; --border:#e5e7eb; --chipbg:#f6f8fa;
+  --gap:18px;
+  --radius:16px;
+  --ink:#111827;
+  --muted:#6b7280;
+  --border:#e5e7eb;
+  --chipbg:#f6f8fa;
 }
-.container{max-width:820px;margin:14px auto 18px auto;padding:0 10px;font-family:Inter,system-ui,Arial}
-.header h3{margin:0 0 4px 0}
-.header .meta{color:var(--muted)}
-.row{display:grid;grid-template-columns:240px 1fr;column-gap:16px;align-items:start;margin:10px 0}
-.cat{font-weight:800;line-height:1.2}
-.cat .sub{display:block;color:var(--muted);font-weight:500;font-size:12px;margin-top:2px}
-.grid{display:grid;grid-template-columns:repeat(5,minmax(84px,1fr));gap:var(--gap)} /* 5 columns -> 3 rows for 15 chips */
+.container{
+  max-width:100%;
+  width:100%;
+  margin:14px auto 18px auto;
+  padding:0 24px 24px 24px;
+  font-family:Inter,system-ui,Arial;
+  box-sizing:border-box;
+}
+.header h3{
+  margin:4px 0;
+  font-size:20px;
+}
+.header .meta{
+  color:var(--muted);
+  margin-top:2px;
+  font-size:13px;
+}
+.row{
+  margin:18px 0 0 0;
+}
+.grid{
+  display:grid;
+  grid-template-columns:repeat(5,minmax(140px,1fr)); /* 5 columns -> 3 rows for 15 tiles */
+  gap:var(--gap);
+}
 .chip{
-  display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:64px;
-  padding:8px 10px;border:1px solid #d1d5db;border-radius:var(--radius);background:var(--chipbg);
-  color:var(--ink);text-align:center;position:relative;
+  display:flex;
+  flex-direction:column;
+  align-items:center;
+  justify-content:center;
+  min-height:120px;
+  padding:16px 18px;
+  border:1px solid var(--border);
+  border-radius:var(--radius);
+  background:var(--chipbg);
+  color:var(--ink);
+  text-align:center;
+  box-sizing:border-box;
 }
-.chip .code{font-weight:800;line-height:1.05}
-.chip .pax{font-size:11px;color:var(--ink);line-height:1.05;margin-top:2px}
-.chip .dev{font-size:11px;color:var(--muted);line-height:1.05;margin-top:1px}
-.chip.origin{box-shadow:0 0 0 2px rgba(231,76,60,.22) inset;border-color:#E74C3C}
+.chip .code{
+  font-weight:800;
+  line-height:1.1;
+  font-size:16px;
+}
+.chip .pax{
+  font-size:13px;
+  color:var(--ink);
+  line-height:1.2;
+  margin-top:6px;
+}
+.chip .dev{
+  font-size:12px;
+  color:var(--muted);
+  line-height:1.2;
+  margin-top:4px;
+}
+.chip.origin{
+  box-shadow:0 0 0 2px rgba(231,76,60,.22) inset;
+  border-color:#E74C3C;
+}
 </style>
 """
 
@@ -69,7 +118,6 @@ def _load_aci(excel_path: str) -> pd.DataFrame:
     c_airport   = _pick(df, ["airport name", "airport"])
     c_iata      = _pick(df, ["airport code", "iata", "code"])
     c_total     = _pick(df, ["total passengers", "passengers total", "total pax"])
-    # growth column not used anymore; we still try to find it but we won't rely on it
     c_yoy       = _pick(df, ["% chg 2024-2023", "% chg 2024 - 2023",
                              "% chg 2023-2022", "yoy %", "% change"])
 
@@ -133,7 +181,6 @@ def _nearest_sets(df, iata, topn=15):
     t = df.loc[df["iata"] == iata].iloc[0]
     cand = df[df["iata"] != iata].copy()
 
-    # TOTAL: closest by absolute throughput difference (unique IATA, stable ties)
     cand = cand.assign(abs_diff_pax=(cand["total_passengers"] - t["total_passengers"]).abs())
     r_total = (
         cand.sort_values(["abs_diff_pax", "total_passengers"], ascending=[True, False])
@@ -167,22 +214,23 @@ def build_grid(excel_path: str,
     target, sets, union = _nearest_sets(df, target_iata, topn=15)
     r_total = sets["total"]
 
-    # Build grid (15 chips) for total passengers
     target_total = df.loc[df["iata"] == target_iata, "total_passengers"].iloc[0]
+
+    # Build grid (15 chips) for total passengers
     total_html = _grid_html(r_total, "total_passengers", target_total, target_iata)
 
-    # Reference values for TARGET airport
-    ref_total = f"{target_iata}: {_fmt_int(target_total)} passengers"
+    # Top header text (red-circled area in your screenshot)
+    airport_name = str(target.get("name", target_iata))
+    header_title = f"{airport_name} – overview of airports with similar throughput."
+    header_meta  = f"Target: {target_iata} – {_fmt_int(target_total)} passengers"
 
-    # Titles and labels
-    doc_title = f"{target_iata} \u2013 Insights on passenger throughput versus ACA scoring"
-    header_title = doc_title
-    cat_label = f"Airports with similar passenger throughput to {target_iata}"
+    # Document title (browser tab)
+    doc_title = f"{target_iata} – Airports with similar passenger throughput"
 
     header = f"""
     <div class="header">
       <h3>{header_title}</h3>
-      <div class="meta">Total passengers at {target_iata}: {_fmt_int(target_total)}</div>
+      <div class="meta">{header_meta}</div>
     </div>"""
 
     html = f"""<!doctype html><meta charset="utf-8">
@@ -190,9 +238,7 @@ def build_grid(excel_path: str,
 {CSS}
 <div class="container">
   {header}
-
   <div class="row">
-    <div class="cat">{cat_label}<span class="sub">Target \u2013 {ref_total}</span></div>
     <div class="grid">{total_html}</div>
   </div>
 </div>"""
@@ -202,7 +248,6 @@ def build_grid(excel_path: str,
         with open(out_html, "w", encoding="utf-8") as f:
             f.write(html)
 
-    # Pure throughput-based nearest list (excluding the target itself)
     nearest_list = r_total["iata"].tolist()
 
     return {
@@ -236,7 +281,6 @@ if __name__ == "__main__":
 
     res = build_grid(a.excel, a.iata.upper(), a.wsize, a.wgrowth, a.out)
 
-    # Primary output: list of nearest airports by throughput
     print("Nearest airports by throughput (excluding target):")
     print(", ".join(res["nearest"]))
 
