@@ -94,16 +94,25 @@ def _parse_grid_competitors_from_html(grid_html: str) -> Dict[str, List[str]]:
         return None
 
     comp: Dict[str, List[str]] = {}
-    allowed = {"Share", "Passengers"}  # <— Only keep these categories
+    # Keep Share for backward compatibility, but all new grids
+    # will just default to "Passengers".
+    allowed = {"Share", "Passengers"}
 
     for row in rows:
-        cat_el = row.select_one(".cat")
         grid_el = row.select_one(".grid")
-        if not cat_el or not grid_el:
+        if not grid_el:
             continue
-        cat = _cat_from_label(cat_el.get_text())
+
+        # Old layout: .cat exists and we infer category from its label.
+        cat_el = row.select_one(".cat")
+        if cat_el is not None:
+            cat = _cat_from_label(cat_el.get_text())
+        else:
+            # New layout: no .cat at all, everything is throughput,
+            # so treat as "Passengers" by default.
+            cat = "Passengers"
+
         if not cat or cat not in allowed:
-            # Skip rows that aren't 'Share' or 'Passengers' (i.e., drop 'Growth')
             continue
 
         chips = grid_el.select(".chip")
@@ -119,7 +128,9 @@ def _parse_grid_competitors_from_html(grid_html: str) -> Dict[str, List[str]]:
                 comp.setdefault(iata, [])
                 if cat not in comp[iata]:
                     comp[iata].append(cat)
+
     return comp
+
 
 def _discover_competitors_from_grid(grid_html_path: str = GRID_DEFAULT_PATH) -> Dict[str, List[str]]:
     try:
