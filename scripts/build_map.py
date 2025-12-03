@@ -235,9 +235,9 @@ def build_map(highlight_iatas=None) -> folium.Map:
     highlight_list = [str(x).upper() for x in (highlight_iatas or [])]
     # Ensure the chosen airport is the grid target when possible
     if parsed_target and parsed_target.upper() in highlight_list:
-        chosen = parsed_target.upper()
+        chosen = None
     else:
-        chosen = highlight_list[0] if highlight_list else None
+        chosen = None
 
     highlight = set(highlight_list)
 
