@@ -2,7 +2,7 @@
 # ACA Americas map with:
 #  - target airport highlighted (red outline), others plain fills
 #  - optional highlighting for a set of IATA codes
-#  - labels "IATA, LEVEL" or "IATA, N/A" for unknowns
+#  - labels "IATA, LEVEL" or "IATA, Unscored" for unknowns
 #  - custom legend and zoom meter, no extra Leaflet legend or export button
 
 import io
@@ -169,7 +169,7 @@ def load_coords() -> pd.DataFrame:
 def _parse_grid_composite7(grid_html_path: str = GRID_DEFAULT_PATH):
     """
     Return (target_iata, composite_list_of_7) by reading docs/grid.html.
-    Target parsed from header "<h3>LAX — ...</h3>", composite from the row whose .cat contains 'composite'.
+    Target parsed from header "<h3>JFK — ...</h3>", composite from the row whose .cat contains 'composite'.
     """
     try:
         if not os.path.exists(grid_html_path):
@@ -226,21 +226,18 @@ def build_map(highlight_iatas=None) -> folium.Map:
     """
     parsed_target, parsed_comp = _parse_grid_composite7(GRID_DEFAULT_PATH)
 
-    # Build highlight list
     if not highlight_iatas:
         if parsed_target and parsed_comp:
             highlight_iatas = [parsed_target] + parsed_comp
-        elif parsed_target:
-            highlight_iatas = [parsed_target]
         else:
             print("[WARN] Could not parse Composite 7 from grid; proceeding without highlight set.", file=sys.stderr)
 
     highlight_list = [str(x).upper() for x in (highlight_iatas or [])]
-
-    # Always treat the parsed grid target as the chosen airport when available
-    chosen = parsed_target.upper() if parsed_target else (highlight_list[0] if highlight_list else None)
-    if chosen and chosen not in highlight_list:
-        highlight_list.insert(0, chosen)
+    # Ensure the chosen airport is the grid target when possible
+    if parsed_target and parsed_target.upper() in highlight_list:
+        chosen = parsed_target.upper()
+    else:
+        chosen = highlight_list[0] if highlight_list else None
 
     highlight = set(highlight_list)
 
@@ -323,12 +320,6 @@ def build_map(highlight_iatas=None) -> folium.Map:
 /* legacy spans suppressed (we now show "IATA, LEVEL" text only) */
 .leaflet-tooltip.iata-tt .lvlchip { display:none; }
 .leaflet-tooltip.iata-tt .iata    { display:none; }
-
-/* NEW: make the chosen target label red */
-.leaflet-tooltip.iata-tt .target-iata{
-  color:#E74C3C;
-  text-shadow:0 0 3px #ffffff;
-}
 
 .leaflet-control-layers-expanded{ box-shadow:0 4px 14px rgba(0,0,0,.12); border-radius:10px; }
 .last-updated {
@@ -413,6 +404,7 @@ def build_map(highlight_iatas=None) -> folium.Map:
             stroke_weight = 0
 
         fill_opacity = 0.95
+        add_label = True
         offset_y = -(radius + max(stroke_weight, 0) + max(LABEL_GAP_PX, 1))
 
         lvl = r.aca_level if r.aca_level in PALETTE else "Unknown"
@@ -433,34 +425,29 @@ def build_map(highlight_iatas=None) -> folium.Map:
             ),
         )
 
-        # Label text + styling
-        if lvl == "Unknown":
-            label_text = f"{r.iata}, N/A"
-        else:
-            lvl_badge = LEVEL_BADGE.get(lvl, "")
-            label_text = f"{r.iata}, {lvl_badge}"
-
-        if chosen and r.iata == chosen:
-            # target: add special span class so text turns red
-            label_html = f'<div class="ttxt target-iata">{label_text}</div>'
-        else:
+        if add_label:
+            if lvl == "Unknown":
+                label_text = f"{r.iata}, Unscored"
+            else:
+                lvl_badge = LEVEL_BADGE.get(lvl, "")
+                label_text = f"{r.iata}, {lvl_badge}"
             label_html = f'<div class="ttxt">{label_text}</div>'
-
-        dot.add_child(
-            folium.Tooltip(
-                label_html,
-                permanent=True,
-                direction="top",
-                offset=(0, offset_y),
-                sticky=False,
-                class_name=f"iata-tt size-{size_key} tt-{r.iata}",
-                parse_html=True,
+            dot.add_child(
+                folium.Tooltip(
+                    label_html,
+                    permanent=True,
+                    direction="top",
+                    offset=(0, offset_y),
+                    sticky=False,
+                    class_name=f"iata-tt size-{size_key} tt-{r.iata}",
+                    parse_html=True,
+                )
             )
-        )
 
         dot.add_to(groups[lvl])
 
-    # Keep Leaflet LayerControl commented out so there is no extra "cartodbpositron" legend
+    # Remove Leaflet LayerControl to avoid duplicate legend / "cartodbpositron" entry
+    # (we keep only the custom legend box above)
     # folium.LayerControl(collapsed=False).add_to(m)
 
     # JS: zoom meter + clustering (unchanged except export removed)
