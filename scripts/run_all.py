@@ -16,6 +16,7 @@ DOCS_DIR = "docs"
 RUNS_DIR = os.path.join(DOCS_DIR, "runs")
 MANIFEST = os.path.join(RUNS_DIR, "index.json")
 
+# Use simple tokens instead of .format() to avoid brace conflicts in CSS/JS.
 DASHBOARD_TEMPLATE = r"""<!doctype html><meta charset="utf-8">
 <title>__TITLE__</title>
 <meta name="viewport" content="width=device-width, initial-scale=1"/>
@@ -37,6 +38,7 @@ DASHBOARD_TEMPLATE = r"""<!doctype html><meta charset="utf-8">
   iframe { width:100%; height:620px; border:0; border-radius:12px; box-shadow:0 2px 10px rgba(0,0,0,.05); background:#fff; }
   @media (max-width: 900px) { iframe { height: 520px; } }
 
+  /* Modal */
   .modal-backdrop {
     position:fixed; inset:0; background:rgba(0,0,0,.35); display:none; align-items:center; justify-content:center; z-index:9999;
   }
@@ -67,13 +69,13 @@ DASHBOARD_TEMPLATE = r"""<!doctype html><meta charset="utf-8">
   </div>
 
   <div class="card">
-    <div class="muted">Competitor Grid</div>
-    <iframe id="gridFrame" src="__GRID__" title="Competitor Grid"></iframe>
+    <div class="muted">Similar-throughput airports grid</div>
+    <iframe id="gridFrame" src="__GRID__" title="Similar-throughput grid"></iframe>
   </div>
 
   <div class="card">
-    <div class="muted">ACA scores of airports with similar throughput to __IATA__</div>
-    <iframe id="acaFrame" src="__ACA__" title="ACA Region Table"></iframe>
+    <div class="muted">ACA scores for airports with similar throughput (__IATA__)</div>
+    <iframe id="acaFrame" src="__ACA__" title="ACA scores table"></iframe>
   </div>
 
   <div class="card">
@@ -82,6 +84,7 @@ DASHBOARD_TEMPLATE = r"""<!doctype html><meta charset="utf-8">
   </div>
 </div>
 
+<!-- Modal -->
 <div class="modal-backdrop" id="modalBg" aria-hidden="true">
   <div class="modal" role="dialog" aria-modal="true" aria-labelledby="modalTitle">
     <h3 id="modalTitle">Reset / Choose another run</h3>
@@ -89,17 +92,15 @@ DASHBOARD_TEMPLATE = r"""<!doctype html><meta charset="utf-8">
       <div>
         <label for="runSelect">Pick from previous runs</label>
         <select id="runSelect"><option value="">Loading…</option></select>
-        <div class="hint">Switch instantly to any run that’s already built.</div>
+        <div class="hint">Switch instantly to any run that is already built.</div>
       </div>
       <div>
-        <label>Or set a new target</label>
-        <div class="row">
-          <div style="flex:1; min-width:120px;">
-            <label for="iataInput">IATA</label>
-            <input id="iataInput" placeholder="e.g., LAX" />
-          </div>
+        <label>Run a new build</label>
+        <div class="hint">
+          Click “Run new build” at the top right of this page, then enter a new IATA code
+          in the GitHub Actions form. After the Action finishes, refresh this page and pick
+          the new run from the list on the left.
         </div>
-        <div class="hint">Then click “Run new build”. After the Action finishes, refresh and pick it above.</div>
       </div>
     </div>
     <div class="actions">
@@ -121,6 +122,9 @@ DASHBOARD_TEMPLATE = r"""<!doctype html><meta charset="utf-8">
   const btnReset  = document.getElementById('btnReset');
   const btnClose  = document.getElementById('btnClose');
   const runSelect = document.getElementById('runSelect');
+  const btnApply  = document.getElementById('btnApplyRun');
+
+  let runsCache = [];
 
   function openModal(){ modalBg.style.display = "flex"; modalBg.setAttribute("aria-hidden", "false"); }
   function closeModal(){ modalBg.style.display = "none"; modalBg.setAttribute("aria-hidden", "true"); }
@@ -134,7 +138,8 @@ DASHBOARD_TEMPLATE = r"""<!doctype html><meta charset="utf-8">
       const res = await fetch(runManifestUrl, {cache:"no-store"});
       if (!res.ok) throw new Error("HTTP " + res.status);
       const data = await res.json();
-      renderRunOptions(data.runs || []);
+      runsCache = data.runs || [];
+      renderRunOptions(runsCache);
     } catch(err){
       runSelect.innerHTML = '<option value="">No manifest found</option>';
     }
@@ -152,13 +157,14 @@ DASHBOARD_TEMPLATE = r"""<!doctype html><meta charset="utf-8">
     }).join("");
   }
 
-  document.getElementById('btnApplyRun').addEventListener('click', ()=>{
+  btnApply.addEventListener('click', ()=>{
     const p = runSelect.value;
     if (!p) return;
+    const run = runsCache.find(r => r.path === p) || {};
     gridFrame.src = p + "/grid.html";
     acaFrame.src  = p + "/aca_table.html";
     mapFrame.src  = p + "/aca_map.html";
-    const iata = p.split("/").pop().split("-")[0] || "";
+    const iata  = run.iata || "";
     titleEl.textContent = `${iata} — Grid + ACA + Map`;
     closeModal();
   });
@@ -183,11 +189,31 @@ def _save_manifest(man):
         json.dump(man, f, ensure_ascii=False, indent=2)
 
 def main():
-    ap = argparse.ArgumentParser(description="Build grid + ACA table + ACA map and publish to docs/")
-    ap.add_argument("--iata", required=True, help="Target airport IATA code (e.g., LAX)")
-    ap.add_argument("--gh-owner", default=os.environ.get("GITHUB_REPOSITORY", "owner/repo").split("/")[0])
-    ap.add_argument("--gh-repo",  default=os.environ.get("GITHUB_REPOSITORY", "owner/repo").split("/")[1] if "/" in os.environ.get("GITHUB_REPOSITORY","") else "repo")
-    ap.add_argument("--workflow-file", default="run-both.yml")
+    ap = argparse.ArgumentParser(
+        description="Build grid + ACA table + ACA map and publish to docs/"
+    )
+    ap.add_argument(
+        "--iata",
+        required=True,
+        help="Target airport IATA code (e.g., LAX)",
+    )
+    ap.add_argument(
+        "--gh-owner",
+        default=os.environ.get("GITHUB_REPOSITORY", "owner/repo").split("/")[0],
+    )
+    ap.add_argument(
+        "--gh-repo",
+        default=(
+            os.environ.get("GITHUB_REPOSITORY", "owner/repo").split("/")[1]
+            if "/" in os.environ.get("GITHUB_REPOSITORY", "")
+            else "repo"
+        ),
+    )
+    ap.add_argument(
+        "--workflow-file",
+        default="run-both.yml",
+        help="Workflow file name used for the 'Run new build' link.",
+    )
     args = ap.parse_args()
 
     iata = args.iata.upper()
@@ -195,42 +221,32 @@ def main():
     os.makedirs(DOCS_DIR, exist_ok=True)
     os.makedirs(RUNS_DIR, exist_ok=True)
 
-    # 1) Grid
-    grid_res = build_grid(EXCEL_PATH, iata)
+    # 1) Grid (throughput-only similarity)
+    grid_out_path = os.path.join(DOCS_DIR, "grid.html")
+    grid_res = build_grid(EXCEL_PATH, iata, out_html=grid_out_path)
     grid_html = grid_res["html"]
-    with open(os.path.join(DOCS_DIR, "grid.html"), "w", encoding="utf-8") as f:
-        f.write(grid_html)
 
-    # competitor annotations for ACA table
-    competitors = {}
-    sets = grid_res.get("sets", {})
-    for cat, df in [("Passengers", sets.get("total")),
-                    ("Share", sets.get("share"))]:
-        if df is None:
-            continue
-        for c in df["iata"].unique():
-            if c == iata:
-                continue
-            competitors.setdefault(c, []).append(cat)
-
-    # 2) ACA table
-    aca_html, _aca_df = build_aca_table_html(iata, competitors=competitors)
+    # 2) ACA table (auto-discovers competitors from docs/grid.html)
+    aca_html, _aca_df = build_aca_table_html(iata)
     with open(os.path.join(DOCS_DIR, "aca_table.html"), "w", encoding="utf-8") as f:
         f.write(aca_html)
 
-    # 3) Map – let the map code determine the target and highlight it
-    fmap = build_map()
+    # 3) Map (highlight grid competitors)
+    highlight = set(grid_res.get("union", []))
+    fmap = build_map(highlight_iatas=highlight)
     fmap.save(os.path.join(DOCS_DIR, "aca_map.html"))
 
     # 4) Dashboard
     actions_url = f"https://github.com/{args.gh_owner}/{args.gh_repo}/actions/workflows/{args.workflow_file}"
-    dash_html = (DASHBOARD_TEMPLATE
-                 .replace("__TITLE__", f"{iata} — Grid + ACA + Map")
-                 .replace("__GRID__", "grid.html")
-                 .replace("__ACA__", "aca_table.html")
-                 .replace("__MAP__", "aca_map.html")
-                 .replace("__IATA__", iata)
-                 .replace("__ACTIONS_URL__", actions_url))
+    dash_html = (
+        DASHBOARD_TEMPLATE
+        .replace("__TITLE__", f"{iata} — Grid + ACA + Map")
+        .replace("__GRID__", "grid.html")
+        .replace("__ACA__", "aca_table.html")
+        .replace("__MAP__", "aca_map.html")
+        .replace("__IATA__", iata)
+        .replace("__ACTIONS_URL__", actions_url)
+    )
     with open(os.path.join(DOCS_DIR, "index.html"), "w", encoding="utf-8") as f:
         f.write(dash_html)
 
@@ -247,11 +263,14 @@ def main():
 
     manifest = _load_manifest()
     manifest.setdefault("runs", [])
-    manifest["runs"].append({
-        "ts": ts,
-        "iata": iata,
-        "path": f"runs/{iata}-{ts}"
-    })
+    manifest["runs"].append(
+        {
+            "ts": ts,
+            "iata": iata,
+            "path": f"runs/{iata}-{ts}",
+        }
+    )
+    # Keep only the most recent 100
     manifest["runs"] = manifest["runs"][-100:]
     _save_manifest(manifest)
 
@@ -261,6 +280,8 @@ def main():
     print("  docs/aca_map.html")
     print("  docs/index.html")
     print(f"  {run_dir}/grid.html")
+    print(f"  {run_dir}/aca_table.html")
+    print(f"  {run_dir}/aca_map.html")
     print("Updated manifest:", MANIFEST)
 
 if __name__ == "__main__":
