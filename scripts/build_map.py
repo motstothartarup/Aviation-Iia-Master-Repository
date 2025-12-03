@@ -392,16 +392,10 @@ def build_map(highlight_iatas=None) -> folium.Map:
         size_key = r.get("size", "small")
         base_radius = RADIUS.get(size_key, 6)
 
-        if chosen and r.iata == chosen:
-            # Target airport: red outline
-            radius = base_radius * 1.5
-            stroke_color = "#E74C3C"
-            stroke_weight = max(STROKE, 3)
-        else:
-            # Other airports: no visible outline
-            radius = base_radius * 1.5
-            stroke_color = "rgba(0,0,0,0)"
-            stroke_weight = 0
+        # All airports styled the same, no highlighted circle
+        radius = base_radius * 1.5
+        stroke_color = "rgba(0,0,0,0)"
+        stroke_weight = 0
 
         fill_opacity = 0.95
         add_label = True
@@ -431,7 +425,11 @@ def build_map(highlight_iatas=None) -> folium.Map:
             else:
                 lvl_badge = LEVEL_BADGE.get(lvl, "")
                 label_text = f"{r.iata}, {lvl_badge}"
-            label_html = f'<div class="ttxt">{label_text}</div>'
+
+            # Target airport's label text in red
+            label_color_style = ' style="color:#E74C3C;"' if (chosen and r.iata == chosen) else ""
+            label_html = f'<div class="ttxt"{label_color_style}>{label_text}</div>'
+
             dot.add_child(
                 folium.Tooltip(
                     label_html,
@@ -445,6 +443,7 @@ def build_map(highlight_iatas=None) -> folium.Map:
             )
 
         dot.add_to(groups[lvl])
+
 
     # Remove Leaflet LayerControl to avoid duplicate legend / "cartodbpositron" entry
     # (we keep only the custom legend box above)
