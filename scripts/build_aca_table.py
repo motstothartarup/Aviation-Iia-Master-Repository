@@ -12,17 +12,22 @@ from bs4 import BeautifulSoup
 LEVELS_DESC = ['Level 5', 'Level 4+', 'Level 4', 'Level 3+', 'Level 3', 'Level 2', 'Level 1']
 GRID_DEFAULT_PATH = os.path.join("docs", "grid.html")
 
+
 def fetch_aca_html(timeout: int = 45) -> str:
     url = "https://www.airportcarbonaccreditation.org/accredited-airports/"
-    headers = {"User-Agent": "Mozilla/5.0 (compatible; ACA-Table-Bot/1.0)",
-               "Accept": "text/html,application/xhtml+xml"}
+    headers = {
+        "User-Agent": "Mozilla/5.0 (compatible; ACA-Table-Bot/1.0)",
+        "Accept": "text/html,application/xhtml+xml",
+    }
     r = requests.get(url, headers=headers, timeout=timeout)
     r.raise_for_status()
     return r.text
 
+
 def parse_aca_table(html: str) -> pd.DataFrame:
     soup = BeautifulSoup(html, "lxml")
-    dfs = []
+    dfs: List[pd.DataFrame] = []
+
     table = soup.select_one(".airports-listview table")
     if table is not None:
         try:
@@ -68,18 +73,20 @@ def parse_aca_table(html: str) -> pd.DataFrame:
     aca["iata"] = aca["iata"].astype(str).str.upper()
     return aca
 
+
 def make_payload(df: pd.DataFrame) -> dict:
     regions = sorted(df["region4"].unique(), key=lambda x: (x != "Americas", x))
-    by_region = {}
+    by_region: Dict[str, Dict[str, List[str]] ] = {}
     for reg in regions:
         sub = df[df["region4"] == reg]
-        level_map = {lvl: [] for lvl in LEVELS_DESC}
+        level_map: Dict[str, List[str]] = {lvl: [] for lvl in LEVELS_DESC}
         for lvl, block in sub.groupby("aca_level"):
             level_map.setdefault(lvl, [])
             codes = sorted(str(x).strip().upper() for x in block["iata"].dropna().unique())
             level_map[lvl].extend(codes)
         by_region[reg] = level_map
     return {"levels_desc": LEVELS_DESC, "regions": regions, "by_region": by_region}
+
 
 # --- Competitors (Passengers & Share ONLY; Growth excluded) ---
 def _parse_grid_competitors_from_html(grid_html: str) -> Dict[str, List[str]]:
@@ -88,9 +95,12 @@ def _parse_grid_competitors_from_html(grid_html: str) -> Dict[str, List[str]]:
 
     def _cat_from_label(txt: str) -> Optional[str]:
         t = " ".join((txt or "").strip().lower().split())
-        if "share of region" in t: return "Share"
-        if "growth" in t: return "Growth"
-        if "passenger" in t: return "Passengers"
+        if "share of region" in t:
+            return "Share"
+        if "growth" in t:
+            return "Growth"
+        if "passenger" in t:
+            return "Passengers"
         return None
 
     comp: Dict[str, List[str]] = {}
@@ -142,10 +152,13 @@ def _discover_competitors_from_grid(grid_html_path: str = GRID_DEFAULT_PATH) -> 
     except Exception:
         return {}
 
+
 # --- Main HTML builder ---
-def build_aca_table_html(target_iata: Optional[str] = None,
-                         competitors: Optional[Dict[str, List[str]]] = None,
-                         grid_html_path: str = GRID_DEFAULT_PATH) -> tuple[str, pd.DataFrame]:
+def build_aca_table_html(
+    target_iata: Optional[str] = None,
+    competitors: Optional[Dict[str, List[str]]] = None,
+    grid_html_path: str = GRID_DEFAULT_PATH,
+) -> tuple[str, pd.DataFrame]:
 
     html = fetch_aca_html()
     df = parse_aca_table(html)
@@ -163,7 +176,11 @@ def build_aca_table_html(target_iata: Optional[str] = None,
     if target_iata and (df["iata"] == target_iata).any():
         default_region = df.loc[df["iata"] == target_iata, "region4"].iloc[0]
     else:
-        default_region = "Americas" if "Americas" in payload["regions"] else (payload["regions"][0] if payload["regions"] else "")
+        default_region = (
+            "Americas"
+            if "Americas" in payload["regions"]
+            else (payload["regions"][0] if payload["regions"] else "")
+        )
 
     page = f"""<!doctype html>
 <meta charset="utf-8">
@@ -183,15 +200,7 @@ def build_aca_table_html(target_iata: Optional[str] = None,
   tbody td {{ padding:6px 8px; border-bottom:1px solid #eee; vertical-align:top; }}
   td.lvl {{ font-weight:700; width:100px; white-space:nowrap; }}
   td.count {{ text-align:right; width:60px; color:#6b7785; }}
-  td.codes code {
-    font-family: ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
-    font-size:12px;
-    padding:2px 6px;
-    border-radius:6px;
-    margin:2px 4px 2px 0;
-    display:inline-block;
-    cursor:pointer;
-  }
+  td.codes code {{ font-family: ui-monospace,SFMono-Regular,Menlo,Consolas,monospace; font-size:12px; padding:2px 6px; border-radius:6px; margin:2px 4px 2px 0; display:inline-block; }}
   code.comp {{ background:#fff3cd; color:#000; border:1px solid #f1c40f; }}
   code.hl {{ background:#e74c3c; color:#fff; font-size:14px; font-weight:700; }}
   #downloadBtn {{ margin-top:10px; padding:6px 12px; border-radius:6px; border:none; background:#3498db; color:#fff; cursor:pointer; }}
@@ -237,82 +246,71 @@ def build_aca_table_html(target_iata: Optional[str] = None,
   const target = "{target_iata}";
   const defaultRegion = "{default_region}";
 
-  function option(v,t){{const o=document.createElement('option');o.value=v;o.textContent=t;return o;}}
-  regions.forEach(r=>sel.appendChild(option(r,r)));
+  function option(v,t){{ const o=document.createElement('option'); o.value=v; o.textContent=t; return o; }}
+  regions.forEach(r => sel.appendChild(option(r,r)));
   if (regions.includes(defaultRegion)) sel.value = defaultRegion;
 
-  function render(region){{
-    tbody.innerHTML='';
-    let total=0;
+  // Attach click handlers so users can toggle yellow highlight on any code.
+  function attachChipHandlers(){{ 
+    const chips = document.querySelectorAll('#acaTable tbody td.codes code');
+    chips.forEach(chip => {{
+      chip.style.cursor = 'pointer';
+      chip.addEventListener('click', (ev) => {{
+        const el = ev.currentTarget;
+        // Keep the primary target (red) fixed.
+        if (el.classList.contains('hl')) return;
+        el.classList.toggle('comp');
+      }});
+    }});
+  }}
+
+  function render(region){{ 
+    tbody.innerHTML = '';
+    let total = 0;
     const buckets = byRegion[region] || {{}};
-    levels.forEach(lvl=>{{
+    levels.forEach(lvl => {{
       const codes = (buckets[lvl] || []).slice().sort();
       total += codes.length;
       const tr = document.createElement('tr');
-      const tdLvl=document.createElement('td'); tdLvl.className='lvl'; tdLvl.textContent=lvl;
-      const tdCodes=document.createElement('td'); tdCodes.className='codes';
-      const tdCount=document.createElement('td'); tdCount.className='count'; tdCount.textContent=String(codes.length);
-      if (codes.length) {
-        codes.forEach(c => {
-          const chip = document.createElement('code');
+      const tdLvl = document.createElement('td'); tdLvl.className='lvl'; tdLvl.textContent = lvl;
+      const tdCodes = document.createElement('td'); tdCodes.className='codes';
+      const tdCount = document.createElement('td'); tdCount.className='count'; tdCount.textContent = String(codes.length);
+      if (codes.length) {{
+        codes.forEach(c => {{
+          const chip = document.createElement('code'); 
           chip.textContent = c;
-
-          const isTarget = (c === target);
-          const isComp   = Array.isArray(COMP[c]) && COMP[c].length;
-          const isUser   = userSelected.has(c);
-
-          if (isTarget) {
-            chip.classList.add('hl');
-          }
-          if (isComp || isUser) {
-            chip.classList.add('comp');
-          }
-
+          chip.dataset.code = c;
+          if (c === target) chip.classList.add('hl');
+          else if (Array.isArray(COMP[c]) && COMP[c].length) chip.classList.add('comp');
           tdCodes.appendChild(chip);
-        });
-      } else {
-
-        tdCodes.innerHTML='<span class="muted">—</span>';
+        }});
+      }} else {{
+        tdCodes.innerHTML = '<span class="muted">—</span>';
       }}
-      tr.appendChild(tdLvl); tr.appendChild(tdCodes); tr.appendChild(tdCount);
+      tr.appendChild(tdLvl); 
+      tr.appendChild(tdCodes); 
+      tr.appendChild(tdCount);
       tbody.appendChild(tr);
     }});
-    const trTotal=document.createElement('tr');
-    trTotal.innerHTML='<td class="lvl">Total</td><td></td><td class="count">'+total+'</td>';
+    const trTotal = document.createElement('tr');
+    trTotal.innerHTML = '<td class="lvl">Total</td><td></td><td class="count">' + total + '</td>';
     tbody.appendChild(trTotal);
+    attachChipHandlers();
   }}
 
   sel.addEventListener('change', () => render(sel.value));
   render(sel.value || regions[0] || '');
 
-  // Allow user to click codes to toggle yellow highlight
-  tbody.addEventListener('click', (evt) => {
-    const el = evt.target;
-    if (!el || el.tagName !== 'CODE') return;
-
-    const code = (el.textContent || '').trim().toUpperCase();
-    if (!code) return;
-
-    if (userSelected.has(code)) {
-      userSelected.delete(code);
-    } else {
-      userSelected.add(code);
-    }
-
-    // Re-render current region so all instances of this code update
-    render(sel.value || regions[0] || '');
-  });
-
   // Export as high-res JPEG
-  document.getElementById('downloadBtn').addEventListener('click', () => {
-    html2canvas(document.getElementById('captureArea'), { scale: 3 }).then(canvas => {
+  document.getElementById('downloadBtn').addEventListener('click', () => {{
+    html2canvas(document.getElementById('captureArea'), {{ scale: 3 }}).then(canvas => {{
       const link = document.createElement('a');
       link.download = 'aca_table.jpeg';
       link.href = canvas.toDataURL('image/jpeg', 1.0);
       link.click();
-    });
-  });
-
+    }});
+  }});
+}})();
 </script>
 """
     return page, df
