@@ -235,9 +235,12 @@ def build_map(highlight_iatas=None) -> folium.Map:
     highlight_list = [str(x).upper() for x in (highlight_iatas or [])]
     # Ensure the chosen airport is the grid target when possible
     if parsed_target and parsed_target.upper() in highlight_list:
-        chosen = None
+        chosen = parsed_target.upper()
+    elif highlight_list:
+        chosen = highlight_list[0]   # fall back to the first code you passed in
     else:
         chosen = None
+
 
     highlight = set(highlight_list)
 
@@ -426,9 +429,11 @@ def build_map(highlight_iatas=None) -> folium.Map:
                 lvl_badge = LEVEL_BADGE.get(lvl, "")
                 label_text = f"{r.iata}, {lvl_badge}"
 
-            # Highlight airports' label text in red
-            label_color_style = ' style="color:#E74C3C;"' if (r.iata in highlight) else ""
+      
+             # Highlight the single chosen airport's label text in red
+            label_color_style = ' style="color:#E74C3C;"' if (chosen and r.iata == chosen) else ""
             label_html = f'<div class="ttxt"{label_color_style}>{label_text}</div>'
+
 
             dot.add_child(
                 folium.Tooltip(
