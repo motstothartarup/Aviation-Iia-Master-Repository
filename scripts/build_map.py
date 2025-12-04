@@ -459,6 +459,7 @@ def build_map(target_iata=None, highlight_iatas=None) -> folium.Map:
 (function(){
   try {
     const MAP_NAME = "__MAP_NAME__";
+    const CHOSEN   = "__CHOSEN__";
     const ZOOM_SNAP = __ZOOM_SNAP__;
     const ZOOM_DELTA = __ZOOM_DELTA__;
     const WHEEL_PX = __WHEEL_PX__;
@@ -586,9 +587,15 @@ def build_map(target_iata=None, highlight_iatas=None) -> folium.Map:
         sorted.forEach(i=>{
           const r = document.createElement('div');
           r.className = 'row';
-          r.textContent = items[i].iata + (items[i].level ? (", " + items[i].level) : "");
+          const labelText = items[i].iata + (items[i].level ? (", " + items[i].level) : "");
+          if (CHOSEN && items[i].iata === CHOSEN){
+            r.innerHTML = '<span style="color:#E74C3C;">' + labelText + '</span>';
+          } else {
+            r.textContent = labelText;
+          }
           div.appendChild(r);
         });
+
         const pane = map.getPanes().tooltipPane;
         pane.appendChild(div);
         requestAnimationFrame(()=>{
@@ -646,6 +653,7 @@ def build_map(target_iata=None, highlight_iatas=None) -> folium.Map:
           .replace("__STACK_ON_AT_Z__", str(float(STACK_ON_AT_Z)))
           .replace("__HIDE_LABELS_BELOW_Z__", str(float(HIDE_LABELS_BELOW_Z)))
           .replace("__GROUP_RADIUS_MILES__", str(float(GROUP_RADIUS_MILES)))
+          .replace("__CHOSEN__", chosen or "")
     )
 
     m.get_root().script.add_child(folium.Element(js))
