@@ -234,8 +234,16 @@ def build_map(highlight_iatas=None) -> folium.Map:
 
     highlight_list = [str(x).upper() for x in (highlight_iatas or [])]
 
-    # Chosen code: always the first entry in highlight_iatas (like target_iata in the ACA table)
-    chosen = highlight_list[0] if highlight_list else None
+    # Prefer the user-supplied target IATA from the workflow, fall back to first highlight
+    user_iata = os.environ.get("TARGET_IATA", "").strip().upper()  # change name if your env var is different
+
+    if user_iata:
+        chosen = user_iata
+        # Make sure the chosen code is in the highlight list so it gets plotted
+        if user_iata not in highlight_list:
+            highlight_list.insert(0, user_iata)
+    else:
+        chosen = highlight_list[0] if highlight_list else None
 
     highlight = set(highlight_list)
 
@@ -419,7 +427,7 @@ def build_map(highlight_iatas=None) -> folium.Map:
 
         if add_label:
             if lvl == "Unknown":
-                label_text = f"{r.iata}, Unscored"
+                label_text = f"{r.iata}, N/A"
             else:
                 lvl_badge = LEVEL_BADGE.get(lvl, "")
                 label_text = f"{r.iata}, {lvl_badge}"
