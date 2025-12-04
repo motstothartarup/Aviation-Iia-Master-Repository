@@ -42,6 +42,7 @@ RADIUS = {"large": 8, "medium": 7, "small": 6}
 STROKE = 2
 
 LABEL_GAP_PX = 10  # vertical gap between dot and label
+LABEL_OFFSET_SCALE = 0.5  # scale label vertical offset (0.5 = half the current distance)
 
 # --- Zoom tuning knobs (triple speed) ---
 ZOOM_SNAP = 0.10
@@ -317,7 +318,7 @@ def build_map(target_iata=None, highlight_iatas=None) -> folium.Map:
   background: transparent; border: 0; box-shadow: none;
   color: #2e2e2e;
   font-family: "Open Sans","Helvetica Neue",Arial,sans-serif;
-  font-weight: 900; font-size: 12px; letter-spacing: 0.5px;
+  font-weight: 400; font-size: 10px; letter-spacing: 0.5px;
   text-transform: uppercase; white-space: nowrap; text-align:center;
 }
 .leaflet-tooltip-top:before,
@@ -350,9 +351,9 @@ def build_map(target_iata=None, highlight_iatas=None) -> folium.Map:
 .iata-stack{
   position:absolute; z-index:9998; pointer-events:none;
   background:transparent; border:0; box-shadow:none;
-  font:12px "Open Sans","Helvetica Neue",Arial,sans-serif;
+  font:10px "Open Sans","Helvetica Neue",Arial,sans-serif;
   color:#000; letter-spacing:0.5px; text-transform:uppercase;
-  font-weight:1000; text-align:left; white-space:nowrap;
+  font-weight:400; text-align:left; white-space:nowrap;
 }
 .iata-stack .row{ line-height:1.0; margin: __ROWGAP__px 0; }
 
@@ -409,7 +410,10 @@ def build_map(target_iata=None, highlight_iatas=None) -> folium.Map:
 
         fill_opacity = 0.95
         add_label = True
-        offset_y = -(radius + max(stroke_weight, 0) + max(LABEL_GAP_PX, 1))
+        offset_y = -int(
+            (radius + max(stroke_weight, 0) + max(LABEL_GAP_PX, 1)) * LABEL_OFFSET_SCALE
+        )
+
 
         lvl = r.aca_level if r.aca_level in PALETTE else "Unknown"
         dot = folium.CircleMarker(
