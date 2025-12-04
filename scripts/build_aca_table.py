@@ -183,7 +183,15 @@ def build_aca_table_html(target_iata: Optional[str] = None,
   tbody td {{ padding:6px 8px; border-bottom:1px solid #eee; vertical-align:top; }}
   td.lvl {{ font-weight:700; width:100px; white-space:nowrap; }}
   td.count {{ text-align:right; width:60px; color:#6b7785; }}
-  td.codes code {{ font-family: ui-monospace,SFMono-Regular,Menlo,Consolas,monospace; font-size:12px; padding:2px 6px; border-radius:6px; margin:2px 4px 2px 0; display:inline-block; }}
+  td.codes code {
+    font-family: ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+    font-size:12px;
+    padding:2px 6px;
+    border-radius:6px;
+    margin:2px 4px 2px 0;
+    display:inline-block;
+    cursor:pointer;
+  }
   code.comp {{ background:#fff3cd; color:#000; border:1px solid #f1c40f; }}
   code.hl {{ background:#e74c3c; color:#fff; font-size:14px; font-weight:700; }}
   #downloadBtn {{ margin-top:10px; padding:6px 12px; border-radius:6px; border:none; background:#3498db; color:#fff; cursor:pointer; }}
@@ -244,14 +252,26 @@ def build_aca_table_html(target_iata: Optional[str] = None,
       const tdLvl=document.createElement('td'); tdLvl.className='lvl'; tdLvl.textContent=lvl;
       const tdCodes=document.createElement('td'); tdCodes.className='codes';
       const tdCount=document.createElement('td'); tdCount.className='count'; tdCount.textContent=String(codes.length);
-      if(codes.length){{
-        codes.forEach(c=>{{
-          const chip=document.createElement('code'); chip.textContent=c;
-          if (c===target) chip.classList.add('hl');
-          else if (Array.isArray(COMP[c]) && COMP[c].length) chip.classList.add('comp');
+      if (codes.length) {
+        codes.forEach(c => {
+          const chip = document.createElement('code');
+          chip.textContent = c;
+
+          const isTarget = (c === target);
+          const isComp   = Array.isArray(COMP[c]) && COMP[c].length;
+          const isUser   = userSelected.has(c);
+
+          if (isTarget) {
+            chip.classList.add('hl');
+          }
+          if (isComp || isUser) {
+            chip.classList.add('comp');
+          }
+
           tdCodes.appendChild(chip);
-        }});
-      }} else {{
+        });
+      } else {
+
         tdCodes.innerHTML='<span class="muted">—</span>';
       }}
       tr.appendChild(tdLvl); tr.appendChild(tdCodes); tr.appendChild(tdCount);
@@ -262,19 +282,37 @@ def build_aca_table_html(target_iata: Optional[str] = None,
     tbody.appendChild(trTotal);
   }}
 
-  sel.addEventListener('change', ()=>render(sel.value));
+  sel.addEventListener('change', () => render(sel.value));
   render(sel.value || regions[0] || '');
 
+  // Allow user to click codes to toggle yellow highlight
+  tbody.addEventListener('click', (evt) => {
+    const el = evt.target;
+    if (!el || el.tagName !== 'CODE') return;
+
+    const code = (el.textContent || '').trim().toUpperCase();
+    if (!code) return;
+
+    if (userSelected.has(code)) {
+      userSelected.delete(code);
+    } else {
+      userSelected.add(code);
+    }
+
+    // Re-render current region so all instances of this code update
+    render(sel.value || regions[0] || '');
+  });
+
   // Export as high-res JPEG
-  document.getElementById('downloadBtn').addEventListener('click', () => {{
-    html2canvas(document.getElementById('captureArea'), {{ scale: 3 }}).then(canvas => {{
+  document.getElementById('downloadBtn').addEventListener('click', () => {
+    html2canvas(document.getElementById('captureArea'), { scale: 3 }).then(canvas => {
       const link = document.createElement('a');
       link.download = 'aca_table.jpeg';
       link.href = canvas.toDataURL('image/jpeg', 1.0);
       link.click();
-    }});
-  }});
-}})();
+    });
+  });
+
 </script>
 """
     return page, df
