@@ -215,7 +215,7 @@ def _parse_grid_composite7(grid_html_path: str = GRID_DEFAULT_PATH):
 
 
 # ---------- main ----------
-def build_map(highlight_iatas=None) -> folium.Map:
+def build_map(target_iata=None, highlight_iatas=None) -> folium.Map:
     """
     Return a folium.Map for ACA airports in the Americas.
 
@@ -226,26 +226,30 @@ def build_map(highlight_iatas=None) -> folium.Map:
     """
     parsed_target, parsed_comp = _parse_grid_composite7(GRID_DEFAULT_PATH)
 
+    # normalize the user-supplied target
+    target_iata = (target_iata or "").strip().upper()
+
     if not highlight_iatas:
         if parsed_target and parsed_comp:
             highlight_iatas = [parsed_target] + parsed_comp
         else:
+            highlight_iatas = []
             print("[WARN] Could not parse Composite 7 from grid; proceeding without highlight set.", file=sys.stderr)
 
     highlight_list = [str(x).upper() for x in (highlight_iatas or [])]
 
-    # Prefer the user-supplied target IATA from the workflow, fall back to first highlight
-    user_iata = os.environ.get("TARGET_IATA", "").strip().upper()  # change name if your env var is different
-
-    if user_iata:
-        chosen = user_iata
-        # Make sure the chosen code is in the highlight list so it gets plotted
-        if user_iata not in highlight_list:
-            highlight_list.insert(0, user_iata)
+    # Prefer the user-specified target for the red label
+    if target_iata:
+        chosen = target_iata
+        # Ensure it is in the plotted set
+        if target_iata not in highlight_list:
+            highlight_list.insert(0, target_iata)
     else:
+        # fallback: first element of the highlight list
         chosen = highlight_list[0] if highlight_list else None
 
     highlight = set(highlight_list)
+
 
     aca_html = fetch_aca_html()
     aca = parse_aca_table(aca_html)
