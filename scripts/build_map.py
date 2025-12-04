@@ -236,11 +236,8 @@ def build_map(highlight_iatas=None) -> folium.Map:
     # Ensure the chosen airport is the grid target when possible
     if parsed_target and parsed_target.upper() in highlight_list:
         chosen = parsed_target.upper()
-    elif highlight_list:
-        chosen = highlight_list[0]   # fall back to the first code you passed in
     else:
-        chosen = None
-
+        chosen = highlight_list[0] if highlight_list else None
 
     highlight = set(highlight_list)
 
@@ -332,7 +329,7 @@ def build_map(highlight_iatas=None) -> folium.Map:
   font:12px "Open Sans","Helvetica Neue",Arial,sans-serif; color:#485260;
 }
 .zoom-meter{
-  position:absolute; left:12px; top:112px; z-indexf:9999;
+  position:absolute; left:12px; top:112px; z-index:9999;
   background:#fff; padding:6px 8px; border-radius:8px;
   box-shadow:0 2px 8px rgba(0,0,0,.12);
   font:12px "Open Sans","Helvetica Neue",Arial,sans-serif; color:#485260;
@@ -429,11 +426,9 @@ def build_map(highlight_iatas=None) -> folium.Map:
                 lvl_badge = LEVEL_BADGE.get(lvl, "")
                 label_text = f"{r.iata}, {lvl_badge}"
 
-      
-             # Highlight the single chosen airport's label text in red
+            # Target airport's label text in red
             label_color_style = ' style="color:#E74C3C;"' if (chosen and r.iata == chosen) else ""
             label_html = f'<div class="ttxt"{label_color_style}>{label_text}</div>'
-
 
             dot.add_child(
                 folium.Tooltip(
@@ -446,7 +441,6 @@ def build_map(highlight_iatas=None) -> folium.Map:
                     parse_html=True,
                 )
             )
-
 
         dot.add_to(groups[lvl])
 
