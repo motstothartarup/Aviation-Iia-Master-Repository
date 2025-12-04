@@ -116,7 +116,15 @@ DASHBOARD_TEMPLATE = r"""<!doctype html><meta charset="utf-8">
   const gridFrame = document.getElementById('gridFrame');
   const acaFrame  = document.getElementById('acaFrame');
   const mapFrame  = document.getElementById('mapFrame');
-    // Relay ACA table clicks to the map iframe
+  const titleEl   = document.getElementById('title');
+
+  const modalBg   = document.getElementById('modalBg');
+  const btnReset  = document.getElementById('btnReset');
+  const btnClose  = document.getElementById('btnClose');
+  const runSelect = document.getElementById('runSelect');
+  const btnApply  = document.getElementById('btnApplyRun');
+
+  // Relay ACA table clicks to the map iframe
   window.addEventListener('message', (ev) => {
     const data = ev.data || {};
     if (!data || data.type !== 'ACA_TOGGLE_CODE') return;
@@ -127,22 +135,22 @@ DASHBOARD_TEMPLATE = r"""<!doctype html><meta charset="utf-8">
     } catch (e) {}
   });
 
-  const titleEl   = document.getElementById('title');
-
-  const modalBg   = document.getElementById('modalBg');
-  const btnReset  = document.getElementById('btnReset');
-  const btnClose  = document.getElementById('btnClose');
-  const runSelect = document.getElementById('runSelect');
-  const btnApply  = document.getElementById('btnApplyRun');
-
   let runsCache = [];
 
-  function openModal(){ modalBg.style.display = "flex"; modalBg.setAttribute("aria-hidden", "false"); }
-  function closeModal(){ modalBg.style.display = "none"; modalBg.setAttribute("aria-hidden", "true"); }
+  function openModal(){ 
+    modalBg.style.display = "flex"; 
+    modalBg.setAttribute("aria-hidden", "false"); 
+  }
+  function closeModal(){ 
+    modalBg.style.display = "none"; 
+    modalBg.setAttribute("aria-hidden", "true"); 
+  }
 
   btnReset.addEventListener('click', openModal);
   btnClose.addEventListener('click', closeModal);
-  modalBg.addEventListener('click', (e)=>{ if (e.target === modalBg) closeModal(); });
+  modalBg.addEventListener('click', (e)=>{ 
+    if (e.target === modalBg) closeModal(); 
+  });
 
   async function loadRuns(){
     try{
@@ -183,6 +191,7 @@ DASHBOARD_TEMPLATE = r"""<!doctype html><meta charset="utf-8">
   loadRuns();
 })();
 </script>
+
 """
 
 def _load_manifest():
