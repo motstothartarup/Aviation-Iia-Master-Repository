@@ -233,7 +233,7 @@ def main():
 
     # 3) Map (highlight grid competitors)
     highlight = set(grid_res.get("union", []))
-    fmap = build_map(highlight_iatas=highlight)
+    fmap = build_map(target_iata=iata, highlight_iatas=highlight)
     fmap.save(os.path.join(DOCS_DIR, "aca_map.html"))
 
     # 4) Dashboard
