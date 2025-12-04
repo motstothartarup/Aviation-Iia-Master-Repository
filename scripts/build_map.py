@@ -42,7 +42,7 @@ RADIUS = {"large": 8, "medium": 7, "small": 6}
 STROKE = 2
 
 LABEL_GAP_PX = 10  # vertical gap between dot and label
-LABEL_OFFSET_SCALE = 0.5  # scale label vertical offset (0.5 = half the current distance)
+LABEL_OFFSET_SCALE = 0.4  # scale label vertical offset (0.5 = half the current distance)
 
 # --- Zoom tuning knobs (triple speed) ---
 ZOOM_SNAP = 0.10
@@ -318,7 +318,7 @@ def build_map(target_iata=None, highlight_iatas=None) -> folium.Map:
   background: transparent; border: 0; box-shadow: none;
   color: #2e2e2e;
   font-family: "Open Sans","Helvetica Neue",Arial,sans-serif;
-  font-weight: 400; font-size: 10px; letter-spacing: 0.5px;
+  font-weight: 500; font-size: 10px; letter-spacing: 0.5px;
   text-transform: uppercase; white-space: nowrap; text-align:center;
 }
 .leaflet-tooltip-top:before,
@@ -353,7 +353,7 @@ def build_map(target_iata=None, highlight_iatas=None) -> folium.Map:
   background:transparent; border:0; box-shadow:none;
   font:10px "Open Sans","Helvetica Neue",Arial,sans-serif;
   color:#000; letter-spacing:0.5px; text-transform:uppercase;
-  font-weight:400; text-align:left; white-space:nowrap;
+  font-weight:500; text-align:left; white-space:nowrap;
 }
 .iata-stack .row{ line-height:1.0; margin: __ROWGAP__px 0; }
 
