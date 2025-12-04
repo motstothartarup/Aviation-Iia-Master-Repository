@@ -116,6 +116,17 @@ DASHBOARD_TEMPLATE = r"""<!doctype html><meta charset="utf-8">
   const gridFrame = document.getElementById('gridFrame');
   const acaFrame  = document.getElementById('acaFrame');
   const mapFrame  = document.getElementById('mapFrame');
+    // Relay ACA table clicks to the map iframe
+  window.addEventListener('message', (ev) => {
+    const data = ev.data || {};
+    if (!data || data.type !== 'ACA_TOGGLE_CODE') return;
+    try {
+      if (mapFrame && mapFrame.contentWindow) {
+        mapFrame.contentWindow.postMessage(data, '*');
+      }
+    } catch (e) {}
+  });
+
   const titleEl   = document.getElementById('title');
 
   const modalBg   = document.getElementById('modalBg');
