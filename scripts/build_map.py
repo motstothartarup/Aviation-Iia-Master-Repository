@@ -8,6 +8,7 @@
 import io
 import os
 import sys
+import json
 from datetime import datetime, timezone
 
 import folium
@@ -41,8 +42,7 @@ LEVEL_BADGE = {
 RADIUS = {"large": 8, "medium": 7, "small": 6}
 STROKE = 2
 
-LABEL_GAP_PX = 10  # vertical gap between dot and label
-LABEL_OFFSET_SCALE = 0.4  # scale label vertical offset (0.5 = half the current distance)
+LABEL_GAP_PX = 5  # vertical gap between dot and label (reduced for tighter labels)
 
 # --- Zoom tuning knobs (triple speed) ---
 ZOOM_SNAP = 0.10
@@ -235,7 +235,10 @@ def build_map(target_iata=None, highlight_iatas=None) -> folium.Map:
             highlight_iatas = [parsed_target] + parsed_comp
         else:
             highlight_iatas = []
-            print("[WARN] Could not parse Composite 7 from grid; proceeding without highlight set.", file=sys.stderr)
+            print(
+                "[WARN] Could not parse Composite 7 from grid; proceeding without highlight set.",
+                file=sys.stderr,
+            )
 
     highlight_list = [str(x).upper() for x in (highlight_iatas or [])]
 
@@ -251,7 +254,6 @@ def build_map(target_iata=None, highlight_iatas=None) -> folium.Map:
 
     highlight = set(highlight_list)
 
-
     aca_html = fetch_aca_html()
     aca = parse_aca_table(aca_html)
     coords = load_coords()
@@ -263,6 +265,24 @@ def build_map(target_iata=None, highlight_iatas=None) -> folium.Map:
     )
     if amer.empty:
         raise RuntimeError("No rows for the Americas after joining coordinates.")
+
+    # Build a JSON blob with metadata for all Americas airports so JS can
+    # dynamically add/remove markers when the ACA table is clicked.
+    meta = {}
+    for _, row in amer.iterrows():
+        lvl = row.aca_level if row.aca_level in PALETTE else "Unknown"
+        lvl_badge = LEVEL_BADGE.get(lvl, "") if lvl != "Unknown" else ""
+        size_key = row.get("size", "small")
+        meta[str(row.iata)] = {
+            "lat": float(row.latitude_deg),
+            "lon": float(row.longitude_deg),
+            "lvl": lvl,
+            "size": size_key,
+            "fill": PALETTE.get(lvl, "#666"),
+            "badge": lvl_badge,
+            "country": row.get("country", ""),
+            "airport": str(row.get("airport") or row.iata),
+        }
 
     # Guarantee all requested highlight codes can render, even if not ACA-scored
     if highlight:
@@ -284,6 +304,21 @@ def build_map(target_iata=None, highlight_iatas=None) -> folium.Map:
                         extra[col] = None
                 amer = pd.concat([amer, extra[keep_cols]], ignore_index=True, sort=False)
                 amer = amer.drop_duplicates(subset=["iata"], keep="first")
+                # Also add to meta so JS can spawn them later if needed.
+                for _, row in extra.iterrows():
+                    code = str(row.iata)
+                    if code in meta:
+                        continue
+                    meta[code] = {
+                        "lat": float(row.latitude_deg),
+                        "lon": float(row.longitude_deg),
+                        "lvl": "Unknown",
+                        "size": row.get("size", "small") if "size" in row else "small",
+                        "fill": "#666",
+                        "badge": "",
+                        "country": row.get("country", ""),
+                        "airport": str(row.get("airport") or row.iata),
+                    }
 
     # Plot only the highlight set if present
     plot_df = amer[amer["iata"].isin(highlight)].copy() if highlight else amer.copy()
@@ -318,7 +353,7 @@ def build_map(target_iata=None, highlight_iatas=None) -> folium.Map:
   background: transparent; border: 0; box-shadow: none;
   color: #2e2e2e;
   font-family: "Open Sans","Helvetica Neue",Arial,sans-serif;
-  font-weight: 700; font-size: 10px; letter-spacing: 0.5px;
+  font-weight: 500; font-size: 12px; letter-spacing: 0.5px;
   text-transform: uppercase; white-space: nowrap; text-align:center;
 }
 .leaflet-tooltip-top:before,
@@ -351,9 +386,9 @@ def build_map(target_iata=None, highlight_iatas=None) -> folium.Map:
 .iata-stack{
   position:absolute; z-index:9998; pointer-events:none;
   background:transparent; border:0; box-shadow:none;
-  font:10px "Open Sans","Helvetica Neue",Arial,sans-serif;
+  font:12px "Open Sans","Helvetica Neue",Arial,sans-serif;
   color:#000; letter-spacing:0.5px; text-transform:uppercase;
-  font-weight:700; text-align:left; white-space:nowrap;
+  font-weight:600; text-align:left; white-space:nowrap;
 }
 .iata-stack .row{ line-height:1.0; margin: __ROWGAP__px 0; }
 
@@ -392,28 +427,31 @@ def build_map(target_iata=None, highlight_iatas=None) -> folium.Map:
     legend_html = (
         '<div class="legend-box">'
         '<div class="title">ACA Level</div>'
-        f'{legend_items}'
-        '</div>'
+        f"{legend_items}"
+        "</div>"
     )
     m.get_root().html.add_child(folium.Element(legend_html))
 
-    # dots + permanent tooltips
+    # Expose full Americas metadata to JS so it can spawn markers
+    coords_json = json.dumps(meta, separators=(",", ":"))
+    m.get_root().html.add_child(
+        folium.Element(f'<script id="aca-map-data" type="application/json">{coords_json}</script>')
+    )
+
+    # dots + permanent tooltips for the initially highlighted set
     for _, r in plot_df.iterrows():
         lat, lon = float(r.latitude_deg), float(r.longitude_deg)
         size_key = r.get("size", "small")
         base_radius = RADIUS.get(size_key, 6)
 
-        # All airports styled the same, no highlighted circle
+        # All airports styled the same, no outlined circle
         radius = base_radius * 1.5
         stroke_color = "rgba(0,0,0,0)"
         stroke_weight = 0
 
         fill_opacity = 0.95
         add_label = True
-        offset_y = -int(
-            (radius + max(stroke_weight, 0) + max(LABEL_GAP_PX, 1)) * LABEL_OFFSET_SCALE
-        )
-
+        offset_y = -(radius + max(stroke_weight, 0) + max(LABEL_GAP_PX, 1))
 
         lvl = r.aca_level if r.aca_level in PALETTE else "Unknown"
         dot = folium.CircleMarker(
@@ -427,7 +465,9 @@ def build_map(target_iata=None, highlight_iatas=None) -> folium.Map:
             popup=folium.Popup(
                 "<b>{airport}</b><br>IATA: {iata}<br>ACA: <b>{lvl}</b><br>Country: {ctry}".format(
                     airport=r.airport if pd.notna(r.get("airport")) and str(r.get("airport")).strip() else r.iata,
-                    iata=r.iata, lvl=lvl, ctry=r.get("country", "")
+                    iata=r.iata,
+                    lvl=lvl,
+                    ctry=r.get("country", ""),
                 ),
                 max_width=320,
             ),
@@ -458,7 +498,7 @@ def build_map(target_iata=None, highlight_iatas=None) -> folium.Map:
 
         dot.add_to(groups[lvl])
 
-    # JS: zoom meter + clustering (unchanged except export removed)
+    # JS: zoom meter + clustering + dynamic marker toggling
     js = r"""
 (function(){
   try {
@@ -490,6 +530,32 @@ def build_map(target_iata=None, highlight_iatas=None) -> folium.Map:
     function init(){
       const map  = window[MAP_NAME];
       const pane = map.getPanes().tooltipPane;
+
+      // Load full Americas metadata
+      let ACA_META = {};
+      try {
+        const metaScript = document.getElementById('aca-map-data');
+        if (metaScript) {
+          ACA_META = JSON.parse(metaScript.textContent || "{}");
+        }
+      } catch(e) {
+        ACA_META = {};
+      }
+      const ACA_MARKERS = {};
+
+      function registerExistingMarkers(){
+        map.eachLayer(lyr => {
+          if (!(lyr instanceof L.CircleMarker)) return;
+          const tt = (lyr.getTooltip && lyr.getTooltip()) || null;
+          if (!tt || !tt._container) return;
+          const el = tt._container;
+          if (!el || !el.classList.contains('iata-tt')) return;
+          const cls = Array.from(el.classList);
+          const iata = (cls.find(c => c.startsWith('tt-')) || 'tt-').slice(3);
+          if (iata) ACA_MARKERS[iata] = lyr;
+        });
+      }
+      registerExistingMarkers();
 
       function tuneWheel(){
         map.options.zoomSnap = ZOOM_SNAP;
@@ -634,11 +700,73 @@ def build_map(target_iata=None, highlight_iatas=None) -> folium.Map:
           applyClustering(items);
         }));
       }
-      function scheduleUpdate(){ setTimeout(updateAll, __UPDATE_DEBOUNCE_MS__); }
+      function scheduleUpdate(){ setTimeout(updateAll, UPDATE_DEBOUNCE_MS); }
 
       if (map.whenReady) map.whenReady(updateAll);
       map.on('zoomend moveend overlayadd overlayremove layeradd layerremove resize', scheduleUpdate);
       updateAll();
+
+      // Listen for ACA table toggle messages relayed from the parent
+      window.addEventListener('message', function(ev){
+        const data = ev.data || {};
+        if (!data || data.type !== 'ACA_TOGGLE_CODE') return;
+        const code = (data.code || '').toUpperCase();
+        const active = !!data.active;
+        if (!code) return;
+
+        if (active){
+          if (!ACA_MARKERS[code]){
+            const meta = ACA_META[code];
+            if (!meta) return;
+
+            const sizeKey = meta.size || 'small';
+            const baseRadius = (sizeKey === 'large' ? 8 : (sizeKey === 'medium' ? 7 : 6));
+            const radius = baseRadius * 1.5;
+            const strokeColor = "rgba(0,0,0,0)";
+            const strokeWeight = 0;
+            const fillOpacity = 0.95;
+            const offsetY = -(radius + Math.max(strokeWeight, 0) + Math.max(5, 1));
+
+            const lvl = meta.lvl || "Unknown";
+            const fillColor = meta.fill || "#666";
+
+            const dot = L.circleMarker(
+              [meta.lat, meta.lon],
+              {
+                radius: radius,
+                color: strokeColor,
+                weight: strokeWeight,
+                fill: true,
+                fillColor: fillColor,
+                fillOpacity: fillOpacity
+              }
+            );
+
+            let labelText;
+            if (lvl === "Unknown") labelText = code + ", N/A";
+            else labelText = code + ", " + (meta.badge || "");
+
+            const labelHtml = '<div class="ttxt">' + labelText + '</div>';
+
+            dot.bindTooltip(labelHtml, {
+              permanent:true,
+              direction:"top",
+              offset:[0, offsetY],
+              sticky:false,
+              className:"iata-tt size-" + sizeKey + " tt-" + code
+            });
+
+            dot.addTo(map);
+            ACA_MARKERS[code] = dot;
+          }
+        } else {
+          if (ACA_MARKERS[code]){
+            map.removeLayer(ACA_MARKERS[code]);
+            delete ACA_MARKERS[code];
+          }
+        }
+        scheduleUpdate();
+      });
     }
   } catch (err) {
     console.error("[ACA] init failed:", err);
@@ -646,18 +774,18 @@ def build_map(target_iata=None, highlight_iatas=None) -> folium.Map:
 })();
 """
 
-    js = (js
-          .replace("__MAP_NAME__", m.get_name())
-          .replace("__ZOOM_SNAP__", str(float(ZOOM_SNAP)))
-          .replace("__ZOOM_DELTA__", str(float(ZOOM_DELTA)))
-          .replace("__WHEEL_PX__", str(int(WHEEL_PX_PER_ZOOM)))
-          .replace("__WHEEL_DEBOUNCE__", str(int(WHEEL_DEBOUNCE_MS)))
-          .replace("__DB_MAX_HISTORY__", str(int(DB_MAX_HISTORY)))
-          .replace("__UPDATE_DEBOUNCE_MS__", str(int(UPDATE_DEBOUNCE_MS)))
-          .replace("__STACK_ON_AT_Z__", str(float(STACK_ON_AT_Z)))
-          .replace("__HIDE_LABELS_BELOW_Z__", str(float(HIDE_LABELS_BELOW_Z)))
-          .replace("__GROUP_RADIUS_MILES__", str(float(GROUP_RADIUS_MILES)))
-          .replace("__CHOSEN__", chosen or "")
+    js = (
+        js.replace("__MAP_NAME__", m.get_name())
+        .replace("__ZOOM_SNAP__", str(float(ZOOM_SNAP)))
+        .replace("__ZOOM_DELTA__", str(float(ZOOM_DELTA)))
+        .replace("__WHEEL_PX__", str(int(WHEEL_PX_PER_ZOOM)))
+        .replace("__WHEEL_DEBOUNCE__", str(int(WHEEL_DEBOUNCE_MS)))
+        .replace("__DB_MAX_HISTORY__", str(int(DB_MAX_HISTORY)))
+        .replace("__UPDATE_DEBOUNCE_MS__", str(int(UPDATE_DEBOUNCE_MS)))
+        .replace("__STACK_ON_AT_Z__", str(float(STACK_ON_AT_Z)))
+        .replace("__HIDE_LABELS_BELOW_Z__", str(float(HIDE_LABELS_BELOW_Z)))
+        .replace("__GROUP_RADIUS_MILES__", str(float(GROUP_RADIUS_MILES)))
+        .replace("__CHOSEN__", chosen or "")
     )
 
     m.get_root().script.add_child(folium.Element(js))
