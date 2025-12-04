@@ -233,11 +233,9 @@ def build_map(highlight_iatas=None) -> folium.Map:
             print("[WARN] Could not parse Composite 7 from grid; proceeding without highlight set.", file=sys.stderr)
 
     highlight_list = [str(x).upper() for x in (highlight_iatas or [])]
-    # Ensure the chosen airport is the grid target when possible
-    if parsed_target and parsed_target.upper() in highlight_list:
-        chosen = parsed_target.upper()
-    else:
-        chosen = highlight_list[0] if highlight_list else None
+
+    # Chosen code: always the first entry in highlight_iatas (like target_iata in the ACA table)
+    chosen = highlight_list[0] if highlight_list else None
 
     highlight = set(highlight_list)
 
@@ -443,11 +441,6 @@ def build_map(highlight_iatas=None) -> folium.Map:
             )
 
         dot.add_to(groups[lvl])
-
-
-    # Remove Leaflet LayerControl to avoid duplicate legend / "cartodbpositron" entry
-    # (we keep only the custom legend box above)
-    # folium.LayerControl(collapsed=False).add_to(m)
 
     # JS: zoom meter + clustering (unchanged except export removed)
     js = r"""
