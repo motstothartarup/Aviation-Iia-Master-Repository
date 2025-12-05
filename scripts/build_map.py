@@ -1,9 +1,10 @@
 # scripts/build_map.py
 # ACA Americas map with:
-#  - target airport highlighted (red outline), others plain fills
+#  - target airport highlighted (red label), others plain fills
 #  - optional highlighting for a set of IATA codes
-#  - labels "IATA, LEVEL" or "IATA, Unscored" for unknowns
-#  - custom legend and zoom meter, no extra Leaflet legend or export button
+#  - labels "IATA, LEVEL" or "IATA, N/A" for unknowns
+#  - custom legend and zoom meter, stacked labels, and
+#  - dynamic add/remove of markers in response to ACA table clicks.
 
 import io
 import os
@@ -17,7 +18,8 @@ import requests
 from bs4 import BeautifulSoup
 
 # ---------- config ----------
-LEVELS = ['Level 1', 'Level 2', 'Level 3', 'Level 3+', 'Level 4', 'Level 4+', 'Level 5']
+LEVELS = ['Level 1', 'Level 2', 'Level 3', 'Level 3+',
+          'Level 4', 'Level 4+', 'Level 5']
 
 PALETTE = {
     "Level 1": "#5B2C6F",
@@ -42,9 +44,10 @@ LEVEL_BADGE = {
 RADIUS = {"large": 8, "medium": 7, "small": 6}
 STROKE = 2
 
-LABEL_GAP_PX = 5  # vertical gap between dot and label (reduced for tighter labels)
+# vertical gap between dot and label (tighter)
+LABEL_GAP_PX = 5
 
-# --- Zoom tuning knobs (triple speed) ---
+# --- Zoom tuning knobs ---
 ZOOM_SNAP = 0.10
 ZOOM_DELTA = 0.75
 WHEEL_PX_PER_ZOOM = 100
@@ -116,7 +119,7 @@ def parse_aca_table(html: str) -> pd.DataFrame:
         try:
             dfs = pd.read_html(io.StringIO(str(table)))
         except Exception:
-            pass
+            dfs = []
 
     if not dfs:
         all_tables = pd.read_html(html)
@@ -163,7 +166,9 @@ def load_coords() -> pd.DataFrame:
     df = pd.read_csv(url, usecols=use).rename(columns={"iata_code": "iata"})
     df = df.dropna(subset=["iata", "latitude_deg", "longitude_deg"]).copy()
     df["iata"] = df["iata"].astype(str).str.upper()
-    df["size"] = df["type"].map({"large_airport": "large", "medium_airport": "medium"}).fillna("small")
+    df["size"] = df["type"].map(
+        {"large_airport": "large", "medium_airport": "medium"}
+    ).fillna("small")
     return df
 
 
@@ -221,13 +226,12 @@ def build_map(target_iata=None, highlight_iatas=None) -> folium.Map:
     Return a folium.Map for ACA airports in the Americas.
 
     highlight_iatas: optional set/list of IATA codes to emphasize.
-      - Target airport is taken from the grid HTML and gets a red outline.
+      - Target airport is taken from the grid HTML and gets a red label.
       - Other airports get filled circles with no visible outline.
     If highlight_iatas is None, we read [target + composite-7] from docs/grid.html.
     """
     parsed_target, parsed_comp = _parse_grid_composite7(GRID_DEFAULT_PATH)
 
-    # normalize the user-supplied target
     target_iata = (target_iata or "").strip().upper()
 
     if not highlight_iatas:
@@ -245,11 +249,9 @@ def build_map(target_iata=None, highlight_iatas=None) -> folium.Map:
     # Prefer the user-specified target for the red label
     if target_iata:
         chosen = target_iata
-        # Ensure it is in the plotted set
         if target_iata not in highlight_list:
             highlight_list.insert(0, target_iata)
     else:
-        # fallback: first element of the highlight list
         chosen = highlight_list[0] if highlight_list else None
 
     highlight = set(highlight_list)
@@ -266,8 +268,7 @@ def build_map(target_iata=None, highlight_iatas=None) -> folium.Map:
     if amer.empty:
         raise RuntimeError("No rows for the Americas after joining coordinates.")
 
-    # Build a JSON blob with metadata for all Americas airports so JS can
-    # dynamically add/remove markers when the ACA table is clicked.
+    # Build a JSON blob with metadata for all Americas airports
     meta = {}
     for _, row in amer.iterrows():
         lvl = row.aca_level if row.aca_level in PALETTE else "Unknown"
@@ -302,9 +303,10 @@ def build_map(target_iata=None, highlight_iatas=None) -> folium.Map:
                 for col in keep_cols:
                     if col not in extra.columns:
                         extra[col] = None
-                amer = pd.concat([amer, extra[keep_cols]], ignore_index=True, sort=False)
+                amer = pd.concat(
+                    [amer, extra[keep_cols]], ignore_index=True, sort=False
+                )
                 amer = amer.drop_duplicates(subset=["iata"], keep="first")
-                # Also add to meta so JS can spawn them later if needed.
                 for _, row in extra.iterrows():
                     code = str(row.iata)
                     if code in meta:
@@ -338,7 +340,10 @@ def build_map(target_iata=None, highlight_iatas=None) -> folium.Map:
         zoom_start=4.7,
     )
 
-    groups = {lvl: folium.FeatureGroup(name=lvl, show=True).add_to(m) for lvl in (LEVELS + ["Unknown"])}
+    groups = {
+        lvl: folium.FeatureGroup(name=lvl, show=True).add_to(m)
+        for lvl in (LEVELS + ["Unknown"])
+    }
 
     updated = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
 
@@ -417,7 +422,7 @@ def build_map(target_iata=None, highlight_iatas=None) -> folium.Map:
     )
     m.get_root().html.add_child(folium.Element(badge_html))
 
-    # custom legend (simple circles)
+    # custom legend
     legend_items = "".join(
         '<div class="row"><span class="dot" style="background:{color}"></span>{lvl}</div>'.format(
             color=PALETTE.get(lvl, "#666"), lvl=lvl
@@ -432,26 +437,25 @@ def build_map(target_iata=None, highlight_iatas=None) -> folium.Map:
     )
     m.get_root().html.add_child(folium.Element(legend_html))
 
-    # Expose full Americas metadata to JS so it can spawn markers
+    # Expose Americas metadata to JS
     coords_json = json.dumps(meta, separators=(",", ":"))
     m.get_root().html.add_child(
-        folium.Element(f'<script id="aca-map-data" type="application/json">{coords_json}</script>')
+        folium.Element(
+            f'<script id="aca-map-data" type="application/json">{coords_json}</script>'
+        )
     )
 
-
-    # dots + permanent tooltips for the initially highlighted set
+    # dots + permanent tooltips for the initial highlighted set
     for _, r in plot_df.iterrows():
         lat, lon = float(r.latitude_deg), float(r.longitude_deg)
         size_key = r.get("size", "small")
         base_radius = RADIUS.get(size_key, 6)
 
-        # All airports styled the same, no outlined circle
         radius = base_radius * 1.5
         stroke_color = "rgba(0,0,0,0)"
         stroke_weight = 0
 
         fill_opacity = 0.95
-        add_label = True
         offset_y = -(radius + max(stroke_weight, 0) + max(LABEL_GAP_PX, 1))
 
         lvl = r.aca_level if r.aca_level in PALETTE else "Unknown"
@@ -465,7 +469,9 @@ def build_map(target_iata=None, highlight_iatas=None) -> folium.Map:
             fill_opacity=float(fill_opacity),
             popup=folium.Popup(
                 "<b>{airport}</b><br>IATA: {iata}<br>ACA: <b>{lvl}</b><br>Country: {ctry}".format(
-                    airport=r.airport if pd.notna(r.get("airport")) and str(r.get("airport")).strip() else r.iata,
+                    airport=r.airport
+                    if pd.notna(r.get("airport")) and str(r.get("airport")).strip()
+                    else r.iata,
                     iata=r.iata,
                     lvl=lvl,
                     ctry=r.get("country", ""),
@@ -474,28 +480,28 @@ def build_map(target_iata=None, highlight_iatas=None) -> folium.Map:
             ),
         )
 
-        if add_label:
-            if lvl == "Unknown":
-                label_text = f"{r.iata}, N/A"
-            else:
-                lvl_badge = LEVEL_BADGE.get(lvl, "")
-                label_text = f"{r.iata}, {lvl_badge}"
+        if lvl == "Unknown":
+            label_text = f"{r.iata}, N/A"
+        else:
+            lvl_badge = LEVEL_BADGE.get(lvl, "")
+            label_text = f"{r.iata}, {lvl_badge}"
 
-            # Target airport's label text in red
-            label_color_style = ' style="color:#E74C3C;"' if (chosen and r.iata == chosen) else ""
-            label_html = f'<div class="ttxt"{label_color_style}>{label_text}</div>'
+        label_color_style = (
+            ' style="color:#E74C3C;"' if (chosen and r.iata == chosen) else ""
+        )
+        label_html = f'<div class="ttxt"{label_color_style}>{label_text}</div>'
 
-            dot.add_child(
-                folium.Tooltip(
-                    label_html,
-                    permanent=True,
-                    direction="top",
-                    offset=(0, offset_y),
-                    sticky=False,
-                    class_name=f"iata-tt size-{size_key} tt-{r.iata}",
-                    parse_html=True,
-                )
+        dot.add_child(
+            folium.Tooltip(
+                label_html,
+                permanent=True,
+                direction="top",
+                offset=(0, offset_y),
+                sticky=False,
+                class_name=f"iata-tt size-{size_key} tt-{r.iata}",
+                parse_html=True,
             )
+        )
 
         dot.add_to(groups[lvl])
 
@@ -544,6 +550,7 @@ def build_map(target_iata=None, highlight_iatas=None) -> folium.Map:
       }
       const ACA_MARKERS = {};
 
+      // Register markers that were created by Python initially
       function registerExistingMarkers(){
         map.eachLayer(lyr => {
           if (!(lyr instanceof L.CircleMarker)) return;
@@ -572,7 +579,8 @@ def build_map(target_iata=None, highlight_iatas=None) -> folium.Map:
         if (!meter) return;
         const z = map.getZoom();
         const minZ = (map.getMinZoom && map.getMinZoom()) || 0;
-        let maxZ = (map.getMaxZoom && map.getMaxZoom()); if (maxZ == null) maxZ = 19;
+        let maxZ = (map.getMaxZoom && map.getMaxZoom());
+        if (maxZ == null) maxZ = 19;
         const pct = Math.round(((z - minZ)/Math.max(1e-6, (maxZ - minZ))) * 100);
         meter.textContent = "Zoom: " + pct + "% (z=" + z.toFixed(2) + ")";
       }
