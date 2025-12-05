@@ -111,7 +111,6 @@ DASHBOARD_TEMPLATE = r"""<!doctype html><meta charset="utf-8">
 </div>
 
 <script>
-<script>
 (function(){
   const runManifestUrl = "runs/index.json";
   const gridFrame = document.getElementById('gridFrame');
@@ -149,7 +148,9 @@ DASHBOARD_TEMPLATE = r"""<!doctype html><meta charset="utf-8">
 
   btnReset.addEventListener('click', openModal);
   btnClose.addEventListener('click', closeModal);
-  modalBg.addEventListener('click', (e)=>{ if (e.target === modalBg) closeModal(); });
+  modalBg.addEventListener('click', (e)=>{
+    if (e.target === modalBg) closeModal();
+  });
 
   async function loadRuns(){
     try{
@@ -190,8 +191,6 @@ DASHBOARD_TEMPLATE = r"""<!doctype html><meta charset="utf-8">
   loadRuns();
 })();
 </script>
-
-
 """
 
 def _load_manifest():
