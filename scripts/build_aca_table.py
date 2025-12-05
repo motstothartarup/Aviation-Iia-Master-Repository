@@ -9,7 +9,8 @@ import pandas as pd
 import requests
 from bs4 import BeautifulSoup
 
-LEVELS_DESC = ['Level 5', 'Level 4+', 'Level 4', 'Level 3+', 'Level 3', 'Level 2', 'Level 1']
+LEVELS_DESC = ['Level 5', 'Level 4+', 'Level 4',
+               'Level 3+', 'Level 3', 'Level 2', 'Level 1']
 GRID_DEFAULT_PATH = os.path.join("docs", "grid.html")
 
 
@@ -49,17 +50,15 @@ def parse_aca_table(html: str) -> pd.DataFrame:
         dfs = [target]
 
     raw = dfs[0]
-    aca = (
-        raw.rename(
-            columns={
-                "Airport": "airport",
-                "Airport code": "iata",
-                "Country": "country",
-                "Region": "region",
-                "Level": "aca_level",
-            }
-        )[["iata", "airport", "country", "region", "aca_level"]]
-    )
+    aca = raw.rename(
+        columns={
+            "Airport": "airport",
+            "Airport code": "iata",
+            "Country": "country",
+            "Region": "region",
+            "Level": "aca_level",
+        }
+    )[["iata", "airport", "country", "region", "aca_level"]]
 
     def region4(r: str) -> str:
         if r in ("North America", "Latin America & the Caribbean"):
@@ -76,13 +75,16 @@ def parse_aca_table(html: str) -> pd.DataFrame:
 
 def make_payload(df: pd.DataFrame) -> dict:
     regions = sorted(df["region4"].unique(), key=lambda x: (x != "Americas", x))
-    by_region: Dict[str, Dict[str, List[str]] ] = {}
+    by_region: Dict[str, Dict[str, List[str]]] = {}
     for reg in regions:
         sub = df[df["region4"] == reg]
         level_map: Dict[str, List[str]] = {lvl: [] for lvl in LEVELS_DESC}
         for lvl, block in sub.groupby("aca_level"):
             level_map.setdefault(lvl, [])
-            codes = sorted(str(x).strip().upper() for x in block["iata"].dropna().unique())
+            codes = sorted(
+                str(x).strip().upper()
+                for x in block["iata"].dropna().unique()
+            )
             level_map[lvl].extend(codes)
         by_region[reg] = level_map
     return {"levels_desc": LEVELS_DESC, "regions": regions, "by_region": by_region}
@@ -142,7 +144,9 @@ def _parse_grid_competitors_from_html(grid_html: str) -> Dict[str, List[str]]:
     return comp
 
 
-def _discover_competitors_from_grid(grid_html_path: str = GRID_DEFAULT_PATH) -> Dict[str, List[str]]:
+def _discover_competitors_from_grid(
+    grid_html_path: str = GRID_DEFAULT_PATH,
+) -> Dict[str, List[str]]:
     try:
         if not os.path.exists(grid_html_path):
             return {}
@@ -159,7 +163,6 @@ def build_aca_table_html(
     competitors: Optional[Dict[str, List[str]]] = None,
     grid_html_path: str = GRID_DEFAULT_PATH,
 ) -> tuple[str, pd.DataFrame]:
-
     html = fetch_aca_html()
     df = parse_aca_table(html)
     payload = make_payload(df)
@@ -176,41 +179,46 @@ def build_aca_table_html(
     if target_iata and (df["iata"] == target_iata).any():
         default_region = df.loc[df["iata"] == target_iata, "region4"].iloc[0]
     else:
-        default_region = (
-            "Americas"
-            if "Americas" in payload["regions"]
-            else (payload["regions"][0] if payload["regions"] else "")
-        )
+        if payload["regions"]:
+            default_region = (
+                "Americas"
+                if "Americas" in payload["regions"]
+                else payload["regions"][0]
+            )
+        else:
+            default_region = ""
 
-    page = f"""<!doctype html>
+    # HTML template with simple tokens to avoid f-string brace issues
+    template = r"""<!doctype html>
 <meta charset="utf-8">
 <title>ACA Airports — Region Table</title>
 <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate"/>
 <meta http-equiv="Pragma" content="no-cache"/>
 <meta http-equiv="Expires" content="0"/>
 <style>
-  body {{ margin:0; padding:24px; font:14px/1.4 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Arial,sans-serif; background:#f6f8fb; }}
-  .wrap {{ max-width:1100px; margin:0 auto; }}
-  .card {{ background:#fff; border-radius:12px; box-shadow:0 4px 20px rgba(0,0,0,.08); padding:20px; }}
-  h1 {{ margin:0 0 12px 0; font-size:20px; }}
-  .row {{ display:flex; gap:16px; align-items:center; flex-wrap:wrap; }}
-  .muted {{ color:#6b7785; font-size:12px; }}
-  table {{ width:100%; border-collapse:collapse; margin-top:14px; font-size:13px; }}
-  thead th {{ text-align:left; font-weight:600; padding:6px 8px; border-bottom:1px solid #ddd; background:#fafbfc; }}
-  tbody td {{ padding:6px 8px; border-bottom:1px solid #eee; vertical-align:top; }}
-  td.lvl {{ font-weight:700; width:100px; white-space:nowrap; }}
-  td.count {{ text-align:right; width:60px; color:#6b7785; }}
-  td.codes code {{ font-family: ui-monospace,SFMono-Regular,Menlo,Consolas,monospace; font-size:12px; padding:2px 6px; border-radius:6px; margin:2px 4px 2px 0; display:inline-block; }}
-  code.comp {{ background:#fff3cd; color:#000; border:1px solid #f1c40f; }}
-  code.hl {{ background:#e74c3c; color:#fff; font-size:14px; font-weight:700; }}
-  #downloadBtn {{ margin-top:10px; padding:6px 12px; border-radius:6px; border:none; background:#3498db; color:#fff; cursor:pointer; }}
+  body { margin:0; padding:24px; font:14px/1.4 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Arial,sans-serif; background:#f6f8fb; }
+  .wrap { max-width:1100px; margin:0 auto; }
+  .card { background:#fff; border-radius:12px; box-shadow:0 4px 20px rgba(0,0,0,.08); padding:20px; }
+  h1 { margin:0 0 12px 0; font-size:20px; }
+  .row { display:flex; gap:16px; align-items:center; flex-wrap:wrap; }
+  .muted { color:#6b7785; font-size:12px; }
+  table { width:100%; border-collapse:collapse; margin-top:14px; font-size:13px; }
+  thead th { text-align:left; font-weight:600; padding:6px 8px; border-bottom:1px solid #ddd; background:#fafbfc; }
+  tbody td { padding:6px 8px; border-bottom:1px solid #eee; vertical-align:top; }
+  td.lvl { font-weight:700; width:100px; white-space:nowrap; }
+  td.count { text-align:right; width:60px; color:#6b7785; }
+  td.codes code { font-family: ui-monospace,SFMono-Regular,Menlo,Consolas,monospace; font-size:12px; padding:2px 6px; border-radius:6px; margin:2px 4px 2px 0; display:inline-block; cursor:pointer; }
+  code.comp { background:#fff3cd; color:#000; border:1px solid #f1c40f; }
+  code.hl { background:#e74c3c; color:#fff; font-size:14px; font-weight:700; }
+  code.user-hl { background:#fff3cd; color:#000; border:1px solid #f1c40f; box-shadow:0 0 0 1px rgba(0,0,0,.1) inset; }
+  #downloadBtn { margin-top:10px; padding:6px 12px; border-radius:6px; border:none; background:#3498db; color:#fff; cursor:pointer; }
 </style>
 
 <div class="wrap">
   <div class="card" id="captureArea">
     <div class="row">
       <h1>ACA Airports by Region</h1>
-      <div class="muted">Last updated: {updated}</div>
+      <div class="muted">Last updated: __UPDATED__</div>
     </div>
     <div class="row" style="margin-top:8px;">
       <label for="regionSelect" class="muted">Region:</label>
@@ -232,37 +240,46 @@ def build_aca_table_html(
 </div>
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
-<script id="aca-data" type="application/json">{data_json}</script>
-<script id="competitor-data" type="application/json">{competitors_json}</script>
+<script id="aca-data" type="application/json">__DATA_JSON__</script>
+<script id="competitor-data" type="application/json">__COMP_JSON__</script>
 <script>
-(function(){{
+(function(){
   const DATA = JSON.parse(document.getElementById('aca-data').textContent);
-  const COMP = JSON.parse(document.getElementById('competitor-data').textContent || "{{}}");
+  const COMP = JSON.parse(document.getElementById('competitor-data').textContent || "{}");
   const sel = document.getElementById('regionSelect');
   const tbody = document.querySelector('#acaTable tbody');
   const levels = DATA.levels_desc || [];
   const regions = DATA.regions || [];
-  const byRegion = DATA.by_region || {{}};
-  const target = "{target_iata}";
-  const defaultRegion = "{default_region}";
+  const byRegion = DATA.by_region || {};
+  const target = "__TARGET__";
+  const defaultRegion = "__DEFAULT_REGION__";
 
-  function option(v,t){{ const o=document.createElement('option'); o.value=v; o.textContent=t; return o; }}
-  regions.forEach(r => sel.appendChild(option(r,r)));
+  function option(v,t){
+    const o=document.createElement('option');
+    o.value=v; o.textContent=t; return o;
+  }
+
+  regions.forEach(r=>sel.appendChild(option(r,r)));
   if (regions.includes(defaultRegion)) sel.value = defaultRegion;
 
-  // Attach click handlers so users can toggle yellow highlight on any code.
-  function attachChipHandlers(){{ 
-    const chips = document.querySelectorAll('#acaTable tbody td.codes code');
-    chips.forEach(chip => {{
-      chip.style.cursor = 'pointer';
-      chip.addEventListener('click', (ev) => {{
-        const el = ev.currentTarget;
-        // Keep the primary target (red) fixed.
-        if (el.classList.contains('hl')) return;
-        el.classList.toggle('comp');
-      }});
-    }});
-  }}
+  function toggleCode(codeEl){
+    const code = (codeEl.textContent || "").trim().toUpperCase();
+    if (!code) return;
+    const nowActive = !codeEl.classList.contains('user-hl');
+    if (nowActive){
+      codeEl.classList.add('user-hl');
+    } else {
+      codeEl.classList.remove('user-hl');
+    }
+    try {
+      if (window.parent) {
+        window.parent.postMessage(
+          { type: "ACA_TOGGLE_CODE", code: code, active: nowActive },
+          "*"
+        );
+      }
+    } catch (e) {}
+  }
 
   function render(region){
     tbody.innerHTML='';
@@ -275,72 +292,49 @@ def build_aca_table_html(
       const tdLvl=document.createElement('td'); tdLvl.className='lvl'; tdLvl.textContent=lvl;
       const tdCodes=document.createElement('td'); tdCodes.className='codes';
       const tdCount=document.createElement('td'); tdCount.className='count'; tdCount.textContent=String(codes.length);
-
       if(codes.length){
         codes.forEach(c=>{
           const chip=document.createElement('code');
           chip.textContent=c;
-
-          // Initial styles
-          if (c===target){
-            chip.classList.add('hl','extra-selected');
-          } else if (Array.isArray(COMP[c]) && COMP[c].length){
-            chip.classList.add('comp','extra-selected');
-          }
-
-          // Click handler: toggle highlight + notify parent
-          chip.addEventListener('click', () => {
-            const wasActive = chip.classList.contains('extra-selected');
-            const newState  = !wasActive;
-
-            if (newState){
-              chip.classList.add('extra-selected');
-              // If it was the target, keep "hl"; otherwise use "comp" style
-              if (c === target) chip.classList.add('hl');
-              else chip.classList.add('comp');
-            } else {
-              chip.classList.remove('extra-selected','hl','comp');
-            }
-
-            // Tell parent so it can forward to the map iframe
-            try {
-              window.parent.postMessage(
-                { type: 'ACA_TOGGLE_CODE', code: c, active: newState },
-                '*'
-              );
-            } catch(e) {}
-          });
-
+          if (c===target) chip.classList.add('hl');
+          else if (Array.isArray(COMP[c]) && COMP[c].length) chip.classList.add('comp');
+          chip.addEventListener('click', function(){ toggleCode(chip); });
           tdCodes.appendChild(chip);
         });
       } else {
         tdCodes.innerHTML='<span class="muted">—</span>';
       }
-
       tr.appendChild(tdLvl); tr.appendChild(tdCodes); tr.appendChild(tdCount);
       tbody.appendChild(tr);
     });
-
     const trTotal=document.createElement('tr');
     trTotal.innerHTML='<td class="lvl">Total</td><td></td><td class="count">'+total+'</td>';
     tbody.appendChild(trTotal);
   }
 
-sel.addEventListener('change', () => render(sel.value));
-render(sel.value || regions[0] || '');
+  sel.addEventListener('change', ()=>render(sel.value));
+  render(sel.value || regions[0] || '');
 
-// Export as high-res JPEG
-document.getElementById('downloadBtn').addEventListener('click', () => {
-  html2canvas(document.getElementById('captureArea'), { scale: 3 }).then(canvas => {
-    const link = document.createElement('a');
-    link.download = 'aca_table.jpeg';
-    link.href = canvas.toDataURL('image/jpeg', 1.0);
-    link.click();
+  // Export as high-res JPEG
+  document.getElementById('downloadBtn').addEventListener('click', () => {
+    html2canvas(document.getElementById('captureArea'), { scale: 3 }).then(canvas => {
+      const link = document.createElement('a');
+      link.download = 'aca_table.jpeg';
+      link.href = canvas.toDataURL('image/jpeg', 1.0);
+      link.click();
+    });
   });
-});
-
-})();   // <-- THIS closes the IIFE correctly
+})();
 </script>
-
 """
+
+    page = (
+        template
+        .replace("__UPDATED__", updated)
+        .replace("__DATA_JSON__", data_json)
+        .replace("__COMP_JSON__", competitors_json)
+        .replace("__TARGET__", target_iata)
+        .replace("__DEFAULT_REGION__", default_region)
+    )
+
     return page, df
