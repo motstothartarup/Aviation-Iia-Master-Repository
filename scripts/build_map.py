@@ -44,8 +44,10 @@ LEVEL_BADGE = {
 RADIUS = {"large": 8, "medium": 7, "small": 6}
 STROKE = 2
 
-# vertical gap between dot and label (tighter)
+# vertical gap between dot and label (base) + scale factor to pull labels closer
 LABEL_GAP_PX = 5
+LABEL_OFFSET_SCALE = 0.7  # tweak between ~0.5 and 1.0 to taste
+
 
 # --- Zoom tuning knobs ---
 ZOOM_SNAP = 0.10
@@ -455,8 +457,11 @@ def build_map(target_iata=None, highlight_iatas=None) -> folium.Map:
         stroke_color = "rgba(0,0,0,0)"
         stroke_weight = 0
 
-        fill_opacity = 0.95
-        offset_y = -(radius + max(stroke_weight, 0) + max(LABEL_GAP_PX, 1))
+        fill_opacity = 0.80
+        offset_y_base = radius + max(stroke_weight, 0) + max(LABEL_GAP_PX, 1)
+        offset_y = -int(offset_y_base * LABEL_OFFSET_SCALE)
+
+
 
         lvl = r.aca_level if r.aca_level in PALETTE else "Unknown"
         dot = folium.CircleMarker(
@@ -521,6 +526,10 @@ def build_map(target_iata=None, highlight_iatas=None) -> folium.Map:
     const STACK_ON_AT_Z = __STACK_ON_AT_Z__;
     const HIDE_LABELS_BELOW_Z = __HIDE_LABELS_BELOW_Z__;
     const GROUP_RADIUS_MILES = __GROUP_RADIUS_MILES__;
+
+    // Match Python label offset scaling
+    const OFFSET_SCALE = 0.7;
+
 
     window.ACA_DB = window.ACA_DB || { latest:null, history:[] };
 
@@ -734,7 +743,9 @@ def build_map(target_iata=None, highlight_iatas=None) -> folium.Map:
             const strokeColor = "rgba(0,0,0,0)";
             const strokeWeight = 0;
             const fillOpacity = 0.95;
-            const offsetY = -(radius + Math.max(strokeWeight, 0) + Math.max(5, 1));
+            const offsetBase = radius + Math.max(strokeWeight, 0) + Math.max(5, 1);
+            const offsetY = -Math.round(offsetBase * OFFSET_SCALE);
+
 
             const lvl = meta.lvl || "Unknown";
             const fillColor = meta.fill || "#666";
