@@ -111,6 +111,7 @@ DASHBOARD_TEMPLATE = r"""<!doctype html><meta charset="utf-8">
 </div>
 
 <script>
+<script>
 (function(){
   const runManifestUrl = "runs/index.json";
   const gridFrame = document.getElementById('gridFrame');
@@ -137,20 +138,18 @@ DASHBOARD_TEMPLATE = r"""<!doctype html><meta charset="utf-8">
 
   let runsCache = [];
 
-  function openModal(){ 
-    modalBg.style.display = "flex"; 
-    modalBg.setAttribute("aria-hidden", "false"); 
+  function openModal(){
+    modalBg.style.display = "flex";
+    modalBg.setAttribute("aria-hidden", "false");
   }
-  function closeModal(){ 
-    modalBg.style.display = "none"; 
-    modalBg.setAttribute("aria-hidden", "true"); 
+  function closeModal(){
+    modalBg.style.display = "none";
+    modalBg.setAttribute("aria-hidden", "true");
   }
 
   btnReset.addEventListener('click', openModal);
   btnClose.addEventListener('click', closeModal);
-  modalBg.addEventListener('click', (e)=>{ 
-    if (e.target === modalBg) closeModal(); 
-  });
+  modalBg.addEventListener('click', (e)=>{ if (e.target === modalBg) closeModal(); });
 
   async function loadRuns(){
     try{
@@ -191,6 +190,7 @@ DASHBOARD_TEMPLATE = r"""<!doctype html><meta charset="utf-8">
   loadRuns();
 })();
 </script>
+
 
 """
 
