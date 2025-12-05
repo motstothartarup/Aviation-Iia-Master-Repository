@@ -262,15 +262,37 @@ def build_aca_table_html(
   regions.forEach(r=>sel.appendChild(option(r,r)));
   if (regions.includes(defaultRegion)) sel.value = defaultRegion;
 
+  function isActiveChip(el){
+    // “Active” means currently highlighted on the table
+    // either original competitor yellow or a user-added highlight
+    return el.classList.contains('user-hl') || el.classList.contains('comp');
+  }
+
   function toggleCode(codeEl){
     const code = (codeEl.textContent || "").trim().toUpperCase();
     if (!code) return;
-    const nowActive = !codeEl.classList.contains('user-hl');
+
+    // Do not toggle the red target, just in case
+    if (codeEl.classList.contains('hl')) return;
+
+    const wasActive = isActiveChip(codeEl);
+    const nowActive = !wasActive;
+
     if (nowActive){
-      codeEl.classList.add('user-hl');
+      // Turning highlight ON
+      codeEl.classList.remove('inactive');
+      // If it is not already a competitor chip, use user-hl
+      if (!codeEl.classList.contains('comp') && !codeEl.classList.contains('hl')){
+        codeEl.classList.add('user-hl');
+      }
     } else {
+      // Turning highlight OFF
       codeEl.classList.remove('user-hl');
+      codeEl.classList.remove('comp');
+      codeEl.classList.add('inactive');
     }
+
+    // Tell the parent (dashboard) so the map can add/remove the marker
     try {
       if (window.parent) {
         window.parent.postMessage(
@@ -280,6 +302,7 @@ def build_aca_table_html(
       }
     } catch (e) {}
   }
+
 
   function render(region){
     tbody.innerHTML='';
@@ -294,14 +317,25 @@ def build_aca_table_html(
       const tdCount=document.createElement('td'); tdCount.className='count'; tdCount.textContent=String(codes.length);
       if(codes.length){
         codes.forEach(c=>{
-          const chip=document.createElement('code');
-          chip.textContent=c;
-          if (c===target) chip.classList.add('hl');
-          else if (Array.isArray(COMP[c]) && COMP[c].length) chip.classList.add('comp');
-          chip.addEventListener('click', function(){ toggleCode(chip); });
+          const chip = document.createElement('code');
+          chip.textContent = c;
+
+          if (c === target) {
+            // Target stays red and is not clickable
+            chip.classList.add('hl');
+          } else {
+            // Competitors start with yellow “comp”
+            if (Array.isArray(COMP[c]) && COMP[c].length) {
+              chip.classList.add('comp');
+            }
+            // All non-target codes can be toggled
+            chip.addEventListener('click', function(){ toggleCode(chip); });
+          }
+
           tdCodes.appendChild(chip);
         });
       } else {
+
         tdCodes.innerHTML='<span class="muted">—</span>';
       }
       tr.appendChild(tdLvl); tr.appendChild(tdCodes); tr.appendChild(tdCount);
