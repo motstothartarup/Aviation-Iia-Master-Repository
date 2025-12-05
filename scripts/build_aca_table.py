@@ -264,53 +264,83 @@ def build_aca_table_html(
     }});
   }}
 
-  function render(region){{ 
-    tbody.innerHTML = '';
-    let total = 0;
-    const buckets = byRegion[region] || {{}};
-    levels.forEach(lvl => {{
+  function render(region){
+    tbody.innerHTML='';
+    let total=0;
+    const buckets = byRegion[region] || {};
+    levels.forEach(lvl=>{
       const codes = (buckets[lvl] || []).slice().sort();
       total += codes.length;
       const tr = document.createElement('tr');
-      const tdLvl = document.createElement('td'); tdLvl.className='lvl'; tdLvl.textContent = lvl;
-      const tdCodes = document.createElement('td'); tdCodes.className='codes';
-      const tdCount = document.createElement('td'); tdCount.className='count'; tdCount.textContent = String(codes.length);
-      if (codes.length) {{
-        codes.forEach(c => {{
-          const chip = document.createElement('code'); 
-          chip.textContent = c;
-          chip.dataset.code = c;
-          if (c === target) chip.classList.add('hl');
-          else if (Array.isArray(COMP[c]) && COMP[c].length) chip.classList.add('comp');
+      const tdLvl=document.createElement('td'); tdLvl.className='lvl'; tdLvl.textContent=lvl;
+      const tdCodes=document.createElement('td'); tdCodes.className='codes';
+      const tdCount=document.createElement('td'); tdCount.className='count'; tdCount.textContent=String(codes.length);
+
+      if(codes.length){
+        codes.forEach(c=>{
+          const chip=document.createElement('code');
+          chip.textContent=c;
+
+          // Initial styles
+          if (c===target){
+            chip.classList.add('hl','extra-selected');
+          } else if (Array.isArray(COMP[c]) && COMP[c].length){
+            chip.classList.add('comp','extra-selected');
+          }
+
+          // Click handler: toggle highlight + notify parent
+          chip.addEventListener('click', () => {
+            const wasActive = chip.classList.contains('extra-selected');
+            const newState  = !wasActive;
+
+            if (newState){
+              chip.classList.add('extra-selected');
+              // If it was the target, keep "hl"; otherwise use "comp" style
+              if (c === target) chip.classList.add('hl');
+              else chip.classList.add('comp');
+            } else {
+              chip.classList.remove('extra-selected','hl','comp');
+            }
+
+            // Tell parent so it can forward to the map iframe
+            try {
+              window.parent.postMessage(
+                { type: 'ACA_TOGGLE_CODE', code: c, active: newState },
+                '*'
+              );
+            } catch(e) {}
+          });
+
           tdCodes.appendChild(chip);
-        }});
-      }} else {{
-        tdCodes.innerHTML = '<span class="muted">—</span>';
-      }}
-      tr.appendChild(tdLvl); 
-      tr.appendChild(tdCodes); 
-      tr.appendChild(tdCount);
+        });
+      } else {
+        tdCodes.innerHTML='<span class="muted">—</span>';
+      }
+
+      tr.appendChild(tdLvl); tr.appendChild(tdCodes); tr.appendChild(tdCount);
       tbody.appendChild(tr);
-    }});
-    const trTotal = document.createElement('tr');
-    trTotal.innerHTML = '<td class="lvl">Total</td><td></td><td class="count">' + total + '</td>';
+    });
+
+    const trTotal=document.createElement('tr');
+    trTotal.innerHTML='<td class="lvl">Total</td><td></td><td class="count">'+total+'</td>';
     tbody.appendChild(trTotal);
-    attachChipHandlers();
-  }}
+  }
 
-  sel.addEventListener('change', () => render(sel.value));
-  render(sel.value || regions[0] || '');
+sel.addEventListener('change', () => render(sel.value));
+render(sel.value || regions[0] || '');
 
-  // Export as high-res JPEG
-  document.getElementById('downloadBtn').addEventListener('click', () => {{
-    html2canvas(document.getElementById('captureArea'), {{ scale: 3 }}).then(canvas => {{
-      const link = document.createElement('a');
-      link.download = 'aca_table.jpeg';
-      link.href = canvas.toDataURL('image/jpeg', 1.0);
-      link.click();
-    }});
-  }});
-}})();
+// Export as high-res JPEG
+document.getElementById('downloadBtn').addEventListener('click', () => {
+  html2canvas(document.getElementById('captureArea'), { scale: 3 }).then(canvas => {
+    const link = document.createElement('a');
+    link.download = 'aca_table.jpeg';
+    link.href = canvas.toDataURL('image/jpeg', 1.0);
+    link.click();
+  });
+});
+
+})();   // <-- THIS closes the IIFE correctly
 </script>
+
 """
     return page, df
