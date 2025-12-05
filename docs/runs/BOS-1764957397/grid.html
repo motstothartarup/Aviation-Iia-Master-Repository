@@ -1,0 +1,84 @@
+<!doctype html><meta charset="utf-8">
+<title>BOS – Airports with similar passenger throughput</title>
+
+<style>
+:root{
+  --gap:18px;
+  --radius:16px;
+  --ink:#111827;
+  --muted:#6b7280;
+  --border:#e5e7eb;
+  --chipbg:#f6f8fa;
+}
+.container{
+  max-width:100%;
+  width:100%;
+  margin:14px auto 18px auto;
+  padding:0 24px 24px 24px;
+  font-family:Inter,system-ui,Arial;
+  box-sizing:border-box;
+}
+.header h3{
+  margin:4px 0;
+  font-size:20px;
+}
+.header .meta{
+  color:var(--muted);
+  margin-top:2px;
+  font-size:13px;
+}
+.row{
+  margin:18px 0 0 0;
+}
+.grid{
+  display:grid;
+  grid-template-columns:repeat(5,minmax(140px,1fr)); /* 5 columns, 3 rows for 15 tiles */
+  gap:var(--gap);
+}
+.chip{
+  display:flex;
+  flex-direction:column;
+  align-items:center;
+  justify-content:center;
+  min-height:120px;
+  padding:16px 18px;
+  border:1px solid var(--border);
+  border-radius:var(--radius);
+  background:var(--chipbg);
+  color:var(--ink);
+  text-align:center;
+  box-sizing:border-box;
+}
+.chip .code{
+  font-weight:800;
+  line-height:1.1;
+  font-size:16px;
+}
+.chip .pax{
+  font-size:13px;
+  color:var(--ink);
+  line-height:1.2;
+  margin-top:6px;
+}
+.chip .dev{
+  font-size:12px;
+  color:var(--muted);
+  line-height:1.2;
+  margin-top:4px;
+}
+.chip.origin{
+  box-shadow:0 0 0 2px rgba(231,76,60,.22) inset;
+  border-color:#E74C3C;
+}
+</style>
+
+<div class="container">
+  
+    <div class="header">
+      <h3>Logan International Airport – overview of airports with similar throughput.</h3>
+      <div class="meta">Target: BOS – 43,555,230 passengers</div>
+    </div>
+  <div class="row">
+    <div class="grid"><div class='chip'><span class='code'>IAH</span><span class='pax'>48,448,545 passengers</span><span class='dev'>+11.2% vs target</span></div><div class='chip'><span class='code'>EWR</span><span class='pax'>48,853,370 passengers</span><span class='dev'>+12.2% vs target</span></div><div class='chip'><span class='code'>MSP</span><span class='pax'>37,168,257 passengers</span><span class='dev'>-14.7% vs target</span></div><div class='chip'><span class='code'>FLL</span><span class='pax'>35,208,611 passengers</span><span class='dev'>-19.2% vs target</span></div><div class='chip'><span class='code'>SFO</span><span class='pax'>52,269,844 passengers</span><span class='dev'>+20.0% vs target</span></div><div class='chip'><span class='code'>PHX</span><span class='pax'>52,325,266 passengers</span><span class='dev'>+20.1% vs target</span></div><div class='chip'><span class='code'>SEA</span><span class='pax'>52,640,716 passengers</span><span class='dev'>+20.9% vs target</span></div><div class='chip'><span class='code'>LGA</span><span class='pax'>33,543,943 passengers</span><span class='dev'>-23.0% vs target</span></div><div class='chip'><span class='code'>DTW</span><span class='pax'>32,971,575 passengers</span><span class='dev'>-24.3% vs target</span></div><div class='chip'><span class='code'>MIA</span><span class='pax'>55,926,566 passengers</span><span class='dev'>+28.4% vs target</span></div><div class='chip'><span class='code'>PHL</span><span class='pax'>30,896,572 passengers</span><span class='dev'>-29.1% vs target</span></div><div class='chip'><span class='code'>MCO</span><span class='pax'>57,211,628 passengers</span><span class='dev'>+31.4% vs target</span></div><div class='chip'><span class='code'>LAS</span><span class='pax'>58,482,005 passengers</span><span class='dev'>+34.3% vs target</span></div><div class='chip'><span class='code'>SLC</span><span class='pax'>28,364,610 passengers</span><span class='dev'>-34.9% vs target</span></div><div class='chip'><span class='code'>CLT</span><span class='pax'>58,811,725 passengers</span><span class='dev'>+35.0% vs target</span></div></div>
+  </div>
+</div>
