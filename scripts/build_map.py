@@ -358,7 +358,7 @@ def build_map(target_iata=None, highlight_iatas=None) -> folium.Map:
   background: transparent; border: 0; box-shadow: none;
   color: #2e2e2e;
   font-family: "Open Sans","Helvetica Neue",Arial,sans-serif;
-  font-weight: 500; font-size: 12px; letter-spacing: 0.5px;
+  font-weight: 700; font-size: 12px; letter-spacing: 0.5px;
   text-transform: uppercase; white-space: nowrap; text-align:center;
 }
 .leaflet-tooltip-top:before,
