@@ -67,7 +67,7 @@ HIDE_LABELS_BELOW_Z = 4.4  # labels visible at >= 4.4
 GROUP_RADIUS_MILES = 30.0
 
 # --- Visual tweak for stacked rows ---
-STACK_ROW_GAP_PX = 6
+STACK_ROW_GAP_PX = 10
 
 # default standalone output
 OUT_DIR = "docs"
