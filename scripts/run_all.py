@@ -256,7 +256,10 @@ def main():
     fmap.save(os.path.join(DOCS_DIR, "aca_map.html"))
 
     # 4) Dashboard
-    actions_url = f"https://github.com/{args.gh_owner}/{args.gh_repo}/actions/workflows/{args.workflow_file}"
+    actions_url = (
+        f"https://github.com/{args.gh_owner}/{args.gh_repo}"
+        f"/actions/workflows/{args.workflow_file}"
+    )
     dash_html = (
         DASHBOARD_TEMPLATE
         .replace("__TITLE__", f"{iata} — Grid + ACA + Map")
