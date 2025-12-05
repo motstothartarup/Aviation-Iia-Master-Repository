@@ -438,6 +438,7 @@ def build_map(target_iata=None, highlight_iatas=None) -> folium.Map:
         folium.Element(f'<script id="aca-map-data" type="application/json">{coords_json}</script>')
     )
 
+
     # dots + permanent tooltips for the initially highlighted set
     for _, r in plot_df.iterrows():
         lat, lon = float(r.latitude_deg), float(r.longitude_deg)
