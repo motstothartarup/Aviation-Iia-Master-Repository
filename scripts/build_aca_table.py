@@ -26,6 +26,7 @@ def fetch_aca_html(timeout: int = 45) -> str:
 
 
 def parse_aca_table(html: str) -> pd.DataFrame:
+    """Return dataframe with: iata, country, region, aca_level, region4."""
     soup = BeautifulSoup(html, "lxml")
     dfs: List[pd.DataFrame] = []
 
@@ -39,7 +40,7 @@ def parse_aca_table(html: str) -> pd.DataFrame:
     if not dfs:
         all_tables = pd.read_html(html)
         target = None
-        want = {"airport", "airport code", "country", "region", "level"}
+        want = {"airport code", "country", "region", "level"}
         for df in all_tables:
             cols = {str(c).strip().lower() for c in df.columns}
             if want.issubset(cols):
@@ -52,13 +53,12 @@ def parse_aca_table(html: str) -> pd.DataFrame:
     raw = dfs[0]
     aca = raw.rename(
         columns={
-            "Airport": "airport",
             "Airport code": "iata",
             "Country": "country",
             "Region": "region",
             "Level": "aca_level",
         }
-    )[["iata", "airport", "country", "region", "aca_level"]]
+    )[["iata", "country", "region", "aca_level"]]  # No airport name here
 
     def region4(r: str) -> str:
         if r in ("North America", "Latin America & the Caribbean"):
@@ -71,6 +71,8 @@ def parse_aca_table(html: str) -> pd.DataFrame:
     aca = aca.dropna(subset=["iata", "aca_level", "region4"]).copy()
     aca["iata"] = aca["iata"].astype(str).str.upper()
     return aca
+
+
 
 
 def make_payload(df: pd.DataFrame) -> dict:
@@ -88,6 +90,7 @@ def make_payload(df: pd.DataFrame) -> dict:
             level_map[lvl].extend(codes)
         by_region[reg] = level_map
     return {"levels_desc": LEVELS_DESC, "regions": regions, "by_region": by_region}
+
 
 
 # --- Competitors (Passengers & Share ONLY; Growth excluded) ---
