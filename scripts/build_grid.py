@@ -106,24 +106,39 @@ def _load_aci(excel_path: str) -> pd.DataFrame:
     """
     Load ACI Excel and return a DataFrame with:
       - iata
+      - name
+      - state
       - total_passengers
     """
-    raw = pd.read_excel(excel_path, sheet_name="Working Global", header=2)  # Sheet name updated
+    raw = pd.read_excel(excel_path, header=2)
     df = raw.rename(columns={c: _norm(c) for c in raw.columns}).copy()
 
-    # Picking only the necessary columns: IATA code and total passengers
-    c_iata = _pick(df, ["airport code", "iata", "code"])  # IATA code column
-    c_total = _pick(df, ["total passengers", "total pax", "total passengers"])  # Total passengers column
+    c_country   = _pick(df, ["country"])
+    c_citystate = _pick(df, ["city/state", "citystate", "city, state", "city / state"])
+    c_airport   = _pick(df, ["airport name", "airport"])
+    c_iata      = _pick(df, ["airport code", "iata", "code"])
+    c_total     = _pick(df, ["total passengers", "passengers total", "total pax"])
+    c_yoy       = _pick(df, ["% chg 2024-2023", "% chg 2024 - 2023",
+                             "% chg 2023-2022", "yoy %", "% change"])
 
-    # Create the relevant columns and ensure they are correctly formatted
-    df["iata"] = df[c_iata].astype(str).str.upper()  # Ensure IATA codes are uppercase
-    df["total_passengers"] = pd.to_numeric(df[c_total], errors="coerce")  # Convert total passengers to numeric
+    if c_country:
+        df = df[df[c_country].astype(str).str.contains("United States", case=False, na=False)]
 
-    # Drop any rows without valid IATA or total_passengers
-    df = df.dropna(subset=["iata", "total_passengers"]).reset_index(drop=True)
+    def _state(s):
+        if not isinstance(s, str):
+            return None
+        parts = re.split(r"\s+", s.strip())
+        return parts[-1] if parts else None
+
+    df["state"] = df[c_citystate].apply(_state) if c_citystate else None
+    df["name"]  = df[c_airport].astype(str)
+    df["iata"]  = df[c_iata].astype(str).str.upper()
+    df["total_passengers"] = pd.to_numeric(df[c_total], errors="coerce")
+    df["yoy_growth_pct"]   = pd.to_numeric(df[c_yoy], errors="coerce") if c_yoy else np.nan
+
+    df = df.dropna(subset=["iata", "state", "total_passengers"]).reset_index(drop=True)
 
     return df
-
 
 def _dev(val, target):
     """Percentage deviation vs target, as a percent of target."""
