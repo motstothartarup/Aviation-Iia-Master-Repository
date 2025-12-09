@@ -167,12 +167,11 @@ def load_coords() -> pd.DataFrame:
     use = ["iata_code", "latitude_deg", "longitude_deg", "type", "name", "iso_country"]
     df = pd.read_csv(url, usecols=use).rename(columns={"iata_code": "iata"})
     df = df.dropna(subset=["iata", "latitude_deg", "longitude_deg"]).copy()
-    df["iata"] = df["iata"].astype(str).str.upper()  # Ensure uppercase IATA codes
+    df["iata"] = df["iata"].astype(str).str.upper()
     df["size"] = df["type"].map(
         {"large_airport": "large", "medium_airport": "medium"}
-    ).fillna("small")  # Use size mapping for airports
+    ).fillna("small")
     return df
-
 
 
 def _parse_grid_composite7(grid_html_path: str = GRID_DEFAULT_PATH):
@@ -263,9 +262,10 @@ def build_map(target_iata=None, highlight_iatas=None) -> folium.Map:
     aca = parse_aca_table(aca_html)
     coords = load_coords()
 
-# Use all global airports
-    amer = aca.merge(coords, on="iata", how="left").dropna(subset=["latitude_deg", "longitude_deg"])
-
+    amer = (
+        aca[aca["region4"].eq("Americas")]
+        .merge(coords, on="iata", how="left")
+        .dropna(subset=["latitude_deg", "longitude_deg"])
     )
     if amer.empty:
         raise RuntimeError("No rows for the Americas after joining coordinates.")
@@ -284,7 +284,7 @@ def build_map(target_iata=None, highlight_iatas=None) -> folium.Map:
             "fill": PALETTE.get(lvl, "#666"),
             "badge": lvl_badge,
             "country": row.get("country", ""),
-            "airport": row.iata,
+            "airport": str(row.get("airport") or row.iata),
         }
 
     # Guarantee all requested highlight codes can render, even if not ACA-scored
@@ -473,7 +473,10 @@ def build_map(target_iata=None, highlight_iatas=None) -> folium.Map:
             fill_color=PALETTE.get(lvl, "#666"),
             fill_opacity=float(fill_opacity),
             popup=folium.Popup(
-                "<b>{iata}</b><br>ACA: <b>{lvl}</b><br>Country: {ctry}".format(
+                "<b>{airport}</b><br>IATA: {iata}<br>ACA: <b>{lvl}</b><br>Country: {ctry}".format(
+                    airport=r.airport
+                    if pd.notna(r.get("airport")) and str(r.get("airport")).strip()
+                    else r.iata,
                     iata=r.iata,
                     lvl=lvl,
                     ctry=r.get("country", ""),
@@ -481,7 +484,6 @@ def build_map(target_iata=None, highlight_iatas=None) -> folium.Map:
                 max_width=320,
             ),
         )
-
 
         if lvl == "Unknown":
             label_text = f"{r.iata}, N/A"
