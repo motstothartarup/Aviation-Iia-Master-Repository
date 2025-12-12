@@ -10,6 +10,7 @@ import io
 import os
 import sys
 import json
+import re
 from datetime import datetime, timezone
 
 import folium
@@ -164,7 +165,7 @@ def parse_aca_table(html: str) -> pd.DataFrame:
 
 def load_coords() -> pd.DataFrame:
     url = "https://raw.githubusercontent.com/davidmegginson/ourairports-data/main/airports.csv"
-    use = ["iata_code", "latitude_deg", "longitude_deg", "type", "name", "iso_country"]
+    use = ["iata_code", "latitude_deg", "longitude_deg", "type", "name", "municipality", "iso_country"]
     df = pd.read_csv(url, usecols=use).rename(columns={"iata_code": "iata"})
     df = df.dropna(subset=["iata", "latitude_deg", "longitude_deg"]).copy()
     df["iata"] = df["iata"].astype(str).str.upper()
@@ -177,7 +178,13 @@ def load_coords() -> pd.DataFrame:
 def _parse_grid_composite7(grid_html_path: str = GRID_DEFAULT_PATH):
     """
     Return (target_iata, composite_list_of_7) by reading docs/grid.html.
-    Target parsed from header "<h3>JFK — ...</h3>", composite from the row whose .cat contains 'composite'.
+
+    Compatible with:
+      - Old grid layout (category rows, composite row)
+      - New throughput-only layout (no .cat, single grid)
+
+    Target parsed from the header <h3>... by taking the first IATA-like token.
+    Composite parsed from the composite row if present, otherwise from the first grid.
     """
     try:
         if not os.path.exists(grid_html_path):
@@ -190,7 +197,9 @@ def _parse_grid_composite7(grid_html_path: str = GRID_DEFAULT_PATH):
         h = soup.select_one(".header h3")
         if h:
             txt = (h.get_text() or "").strip()
-            target = (txt.split("—", 1)[0] or "").strip().upper()
+            m = re.search(r"\b([A-Z0-9]{3,4})\b", txt.upper())
+            if m:
+                target = m.group(1).strip().upper()
 
         comp_row = None
         for row in soup.select(".container .row"):
@@ -201,6 +210,14 @@ def _parse_grid_composite7(grid_html_path: str = GRID_DEFAULT_PATH):
             if "composite" in label:
                 comp_row = row
                 break
+
+        # New layout fallback: pick the first row that has a .grid
+        if not comp_row:
+            for row in soup.select(".container .row"):
+                if row.select_one(".grid") is not None:
+                    comp_row = row
+                    break
+
         if not comp_row:
             return target, []
 
@@ -284,7 +301,7 @@ def build_map(target_iata=None, highlight_iatas=None) -> folium.Map:
             "fill": PALETTE.get(lvl, "#666"),
             "badge": lvl_badge,
             "country": row.get("country", ""),
-            "airport": str(row.get("airport") or row.iata),
+            "city": str(row.get("municipality") or "").strip(),
         }
 
     # Guarantee all requested highlight codes can render, even if not ACA-scored
@@ -321,7 +338,7 @@ def build_map(target_iata=None, highlight_iatas=None) -> folium.Map:
                         "fill": "#666",
                         "badge": "",
                         "country": row.get("country", ""),
-                        "airport": str(row.get("airport") or row.iata),
+                        "city": str(row.get("municipality") or "").strip(),
                     }
 
     # Plot only the highlight set if present
@@ -461,9 +478,16 @@ def build_map(target_iata=None, highlight_iatas=None) -> folium.Map:
         offset_y_base = radius + max(stroke_weight, 0) + max(LABEL_GAP_PX, 1)
         offset_y = -int(offset_y_base * LABEL_OFFSET_SCALE)
 
-
-
         lvl = r.aca_level if r.aca_level in PALETTE else "Unknown"
+
+        city = ""
+        try:
+            city = str(r.get("municipality") or "").strip()
+        except Exception:
+            city = ""
+
+        title_line = r.iata if not city else f"{r.iata}, {city}"
+
         dot = folium.CircleMarker(
             [lat, lon],
             radius=float(radius),
@@ -473,12 +497,9 @@ def build_map(target_iata=None, highlight_iatas=None) -> folium.Map:
             fill_color=PALETTE.get(lvl, "#666"),
             fill_opacity=float(fill_opacity),
             popup=folium.Popup(
-                "<b>{airport}</b><br>IATA: {iata}<br>ACA: <b>{lvl}</b><br>Country: {ctry}".format(
-                    airport=r.airport
-                    if pd.notna(r.get("airport")) and str(r.get("airport")).strip()
-                    else r.iata,
-                    iata=r.iata,
-                    lvl=lvl,
+                "<b>{title}</b><br>ACA: <b>{lvl}</b><br>Country: {ctry}".format(
+                    title=title_line,
+                    lvl=lvl if lvl != "Unknown" else "N/A",
                     ctry=r.get("country", ""),
                 ),
                 max_width=320,
@@ -529,7 +550,6 @@ def build_map(target_iata=None, highlight_iatas=None) -> folium.Map:
 
     // Match Python label offset scaling
     const OFFSET_SCALE = 0.7;
-
 
     window.ACA_DB = window.ACA_DB || { latest:null, history:[] };
 
@@ -745,7 +765,6 @@ def build_map(target_iata=None, highlight_iatas=None) -> folium.Map:
             const fillOpacity = 0.95;
             const offsetBase = radius + Math.max(strokeWeight, 0) + Math.max(5, 1);
             const offsetY = -Math.round(offsetBase * OFFSET_SCALE);
-
 
             const lvl = meta.lvl || "Unknown";
             const fillColor = meta.fill || "#666";
