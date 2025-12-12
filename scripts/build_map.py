@@ -1,10 +1,14 @@
 # scripts/build_map.py
-# ACA Americas map with:
+# ACA map with:
 #  - target airport highlighted (red label), others plain fills
 #  - optional highlighting for a set of IATA codes
 #  - labels "IATA, LEVEL" or "IATA, N/A" for unknowns
 #  - custom legend and zoom meter, stacked labels, and
 #  - dynamic add/remove of markers in response to ACA table clicks.
+#
+# Fixes:
+#  - Do NOT restrict ACA data to Americas only (international peers get correct ACA colors)
+#  - Initial view opens to target's region group (from docs/grid.html)
 
 import io
 import os
@@ -49,7 +53,6 @@ STROKE = 2
 LABEL_GAP_PX = 5
 LABEL_OFFSET_SCALE = 0.7  # tweak between ~0.5 and 1.0 to taste
 
-
 # --- Zoom tuning knobs ---
 ZOOM_SNAP = 0.10
 ZOOM_DELTA = 0.75
@@ -77,13 +80,22 @@ OUT_FILE = os.path.join(OUT_DIR, "aca_map.html")
 # read target + composite list from the grid output
 GRID_DEFAULT_PATH = os.path.join("docs", "grid.html")
 
+# Region-group view presets (for initial map view)
+# These are intentionally broad, so they "feel right" for each group.
+REGION_GROUP_BOUNDS = {
+    "Americas": [[15, -130], [55, -60]],          # USA-focused view
+    "Europe": [[20, -20], [62, 45]],              # Europe + North Africa
+    "UKIMEA": [[5, -20], [60, 95]],               # UK/Europe through Middle East + India
+    "Asia Pacific": [[-45, 90], [55, 180]],       # APAC + Australia
+}
+
 
 # ---------- helpers ----------
 def write_error_page(msg: str) -> None:
     os.makedirs(OUT_DIR, exist_ok=True)
     updated = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
     html = """<!doctype html><meta charset="utf-8">
-<title>ACA Americas map</title>
+<title>ACA map</title>
 <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate"/>
 <meta http-equiv="Pragma" content="no-cache"/>
 <meta http-equiv="Expires" content="0"/>
@@ -91,7 +103,7 @@ def write_error_page(msg: str) -> None:
 .card{background:#fff;border-radius:12px;box-shadow:0 4px 20px rgba(0,0,0,.08);padding:20px}
 h1{margin:0 0 10px 0}code{background:#f5f7fb;padding:2px 6px;border-radius:6px}</style>
 <div class="card">
-  <h1>ACA Americas map</h1>
+  <h1>ACA map</h1>
   <p><strong>Status:</strong> temporarily unavailable.</p>
   <p><strong>Reason:</strong> __MSG__</p>
   <p>Last attempt: __UPDATED__. This page updates when the generator runs.</p>
@@ -150,11 +162,12 @@ def parse_aca_table(html: str) -> pd.DataFrame:
         )[["iata", "airport", "country", "region", "aca_level"]]
     )
 
+    # Keep the original ACA regions, but also compute region4 for the table payload compatibility.
     def region4(r: str) -> str:
         if r in ("North America", "Latin America & the Caribbean"):
             return "Americas"
         if r == "UKIMEA":
-            return "Europe"
+            return "UKIMEA"
         return r
 
     aca["region4"] = aca["region"].map(region4)
@@ -165,7 +178,7 @@ def parse_aca_table(html: str) -> pd.DataFrame:
 
 def load_coords() -> pd.DataFrame:
     url = "https://raw.githubusercontent.com/davidmegginson/ourairports-data/main/airports.csv"
-    use = ["iata_code", "latitude_deg", "longitude_deg", "type", "name", "municipality", "iso_country"]
+    use = ["iata_code", "latitude_deg", "longitude_deg", "type", "name", "iso_country"]
     df = pd.read_csv(url, usecols=use).rename(columns={"iata_code": "iata"})
     df = df.dropna(subset=["iata", "latitude_deg", "longitude_deg"]).copy()
     df["iata"] = df["iata"].astype(str).str.upper()
@@ -175,95 +188,91 @@ def load_coords() -> pd.DataFrame:
     return df
 
 
-def _parse_grid_composite7(grid_html_path: str = GRID_DEFAULT_PATH):
+def _parse_grid_target_and_region_group(grid_html_path: str = GRID_DEFAULT_PATH):
     """
-    Return (target_iata, composite_list_of_7) by reading docs/grid.html.
-
-    Compatible with:
-      - Old grid layout (category rows, composite row)
-      - New throughput-only layout (no .cat, single grid)
-
-    Target parsed from the header <h3>... by taking the first IATA-like token.
-    Composite parsed from the composite row if present, otherwise from the first grid.
+    Reads docs/grid.html and tries to extract:
+      - target IATA (from the first header h3: "<IATA> - overview ...")
+      - region group (from the section header: "... regional peers ... (REGION)")
+    Returns: (target_iata_or_none, region_group_or_none)
     """
     try:
         if not os.path.exists(grid_html_path):
-            return None, []
+            return None, None
         with open(grid_html_path, "r", encoding="utf-8") as f:
             html = f.read()
         soup = BeautifulSoup(html, "lxml")
 
+        # Target IATA
         target = None
         h = soup.select_one(".header h3")
         if h:
             txt = (h.get_text() or "").strip()
-            m = re.search(r"\b([A-Z0-9]{3,4})\b", txt.upper())
+            # expected: "LAX - overview of airports with similar throughput."
+            m = re.match(r"^\s*([A-Z0-9]{2,4})\s*[-–—]", txt.upper())
             if m:
                 target = m.group(1).strip().upper()
 
-        comp_row = None
-        for row in soup.select(".container .row"):
-            cat = row.select_one(".cat")
-            if not cat:
-                continue
-            label = " ".join((cat.get_text() or "").strip().lower().split())
-            if "composite" in label:
-                comp_row = row
+        # Region group from the "regional peers" header
+        region_group = None
+        for h3 in soup.select(".row .header h3"):
+            t = (h3.get_text() or "").strip()
+            if "regional peers" in t.lower():
+                m2 = re.search(r"\(([^)]+)\)\s*$", t)
+                if m2:
+                    region_group = (m2.group(1) or "").strip()
                 break
 
-        # New layout fallback: pick the first row that has a .grid
-        if not comp_row:
-            for row in soup.select(".container .row"):
-                if row.select_one(".grid") is not None:
-                    comp_row = row
-                    break
-
-        if not comp_row:
-            return target, []
-
-        chips = comp_row.select(".grid .chip")
-        out = []
-        for ch in chips:
-            if "origin" in (ch.get("class", []) or []):
-                continue
-            code_el = ch.select_one(".code")
-            if not code_el:
-                continue
-            code = code_el.get_text(strip=True).upper()
-            if code and len(code) <= 4:
-                out.append(code)
-            if len(out) >= 7:
-                break
-        return target, out
+        return target, region_group
     except Exception:
-        return None, []
+        return None, None
+
+
+def _apply_initial_view(m: folium.Map, region_group: str | None, fallback_points=None):
+    """
+    Sets initial view based on region_group.
+    If unknown, falls back to bounds around fallback_points if provided.
+    """
+    rg = (region_group or "").strip()
+    if rg in REGION_GROUP_BOUNDS:
+        b = REGION_GROUP_BOUNDS[rg]
+        m.fit_bounds(b)
+        return
+
+    # Fallback: fit to points
+    pts = fallback_points or []
+    pts = [(float(a), float(b)) for a, b in pts if a is not None and b is not None]
+    if len(pts) >= 2:
+        lats = [p[0] for p in pts]
+        lons = [p[1] for p in pts]
+        m.fit_bounds([[min(lats), min(lons)], [max(lats), max(lons)]])
+    elif len(pts) == 1:
+        m.location = [pts[0][0], pts[0][1]]
 
 
 # ---------- main ----------
 def build_map(target_iata=None, highlight_iatas=None) -> folium.Map:
     """
-    Return a folium.Map for ACA airports in the Americas.
+    Return a folium.Map for ACA airports.
 
     highlight_iatas: optional set/list of IATA codes to emphasize.
-      - Target airport is taken from the grid HTML and gets a red label.
+      - Target airport is taken from the argument and gets a red label.
       - Other airports get filled circles with no visible outline.
-    If highlight_iatas is None, we read [target + composite-7] from docs/grid.html.
+
+    Important:
+      - We DO NOT restrict to Americas anymore; highlighted international peers keep correct ACA colors.
+      - Initial view is set by target's region group parsed from docs/grid.html.
     """
-    parsed_target, parsed_comp = _parse_grid_composite7(GRID_DEFAULT_PATH)
+    parsed_target, parsed_region_group = _parse_grid_target_and_region_group(GRID_DEFAULT_PATH)
 
     target_iata = (target_iata or "").strip().upper()
 
+    # Resolve highlight list
     if not highlight_iatas:
-        if parsed_target and parsed_comp:
-            highlight_iatas = [parsed_target] + parsed_comp
-        else:
-            highlight_iatas = []
-            print(
-                "[WARN] Could not parse Composite 7 from grid; proceeding without highlight set.",
-                file=sys.stderr,
-            )
-
-    highlight_list = [str(x).upper() for x in (highlight_iatas or [])]
+        highlight_list = []
+        if parsed_target:
+            highlight_list.append(parsed_target)
+    else:
+        highlight_list = [str(x).upper() for x in (highlight_iatas or [])]
 
     # Prefer the user-specified target for the red label
     if target_iata:
@@ -271,25 +280,26 @@ def build_map(target_iata=None, highlight_iatas=None) -> folium.Map:
         if target_iata not in highlight_list:
             highlight_list.insert(0, target_iata)
     else:
-        chosen = highlight_list[0] if highlight_list else None
+        chosen = highlight_list[0] if highlight_list else (parsed_target or None)
 
-    highlight = set(highlight_list)
+    highlight = set([c for c in highlight_list if c])
 
     aca_html = fetch_aca_html()
     aca = parse_aca_table(aca_html)
     coords = load_coords()
 
-    amer = (
-        aca[aca["region4"].eq("Americas")]
-        .merge(coords, on="iata", how="left")
-        .dropna(subset=["latitude_deg", "longitude_deg"])
+    # Merge ALL ACA rows with coordinates (global), not just Americas
+    aca_all = (
+        aca.merge(coords, on="iata", how="left")
+           .dropna(subset=["latitude_deg", "longitude_deg"])
+           .copy()
     )
-    if amer.empty:
-        raise RuntimeError("No rows for the Americas after joining coordinates.")
+    if aca_all.empty:
+        raise RuntimeError("No rows after joining ACA table to coordinates.")
 
-    # Build a JSON blob with metadata for all Americas airports
+    # Build a JSON blob with metadata for all ACA airports (global)
     meta = {}
-    for _, row in amer.iterrows():
+    for _, row in aca_all.iterrows():
         lvl = row.aca_level if row.aca_level in PALETTE else "Unknown"
         lvl_badge = LEVEL_BADGE.get(lvl, "") if lvl != "Unknown" else ""
         size_key = row.get("size", "small")
@@ -301,12 +311,12 @@ def build_map(target_iata=None, highlight_iatas=None) -> folium.Map:
             "fill": PALETTE.get(lvl, "#666"),
             "badge": lvl_badge,
             "country": row.get("country", ""),
-            "city": str(row.get("municipality") or "").strip(),
+            "airport": str(row.get("airport") or row.iata),
         }
 
     # Guarantee all requested highlight codes can render, even if not ACA-scored
     if highlight:
-        present_set = set(amer["iata"])
+        present_set = set(aca_all["iata"])
         missing = [c for c in highlight_list if c not in present_set]
         if missing:
             extra = coords[coords["iata"].isin(missing)].copy()
@@ -316,16 +326,15 @@ def build_map(target_iata=None, highlight_iatas=None) -> folium.Map:
                     country=extra.get("iso_country", ""),
                     region="",
                     aca_level="Unknown",
-                    region4="Americas",
+                    region4="",
                 )
-                keep_cols = list(amer.columns)
+                keep_cols = list(aca_all.columns)
                 for col in keep_cols:
                     if col not in extra.columns:
                         extra[col] = None
-                amer = pd.concat(
-                    [amer, extra[keep_cols]], ignore_index=True, sort=False
-                )
-                amer = amer.drop_duplicates(subset=["iata"], keep="first")
+                aca_all = pd.concat([aca_all, extra[keep_cols]], ignore_index=True, sort=False)
+                aca_all = aca_all.drop_duplicates(subset=["iata"], keep="first")
+
                 for _, row in extra.iterrows():
                     code = str(row.iata)
                     if code in meta:
@@ -338,11 +347,11 @@ def build_map(target_iata=None, highlight_iatas=None) -> folium.Map:
                         "fill": "#666",
                         "badge": "",
                         "country": row.get("country", ""),
-                        "city": str(row.get("municipality") or "").strip(),
+                        "airport": str(row.get("airport") or row.iata),
                     }
 
     # Plot only the highlight set if present
-    plot_df = amer[amer["iata"].isin(highlight)].copy() if highlight else amer.copy()
+    plot_df = aca_all[aca_all["iata"].isin(highlight)].copy() if highlight else aca_all.copy()
     if highlight:
         order_map = {code: i for i, code in enumerate(highlight_list)}
         plot_df["__order__"] = plot_df["iata"].map(order_map).fillna(9999).astype(int)
@@ -358,6 +367,10 @@ def build_map(target_iata=None, highlight_iatas=None) -> folium.Map:
         location=[center_lat, center_lon],
         zoom_start=4.7,
     )
+
+    # Apply initial view based on parsed region group from grid.html
+    fallback_pts = list(zip(plot_df["latitude_deg"].tolist(), plot_df["longitude_deg"].tolist()))
+    _apply_initial_view(m, parsed_region_group, fallback_points=fallback_pts)
 
     groups = {
         lvl: folium.FeatureGroup(name=lvl, show=True).add_to(m)
@@ -456,7 +469,7 @@ def build_map(target_iata=None, highlight_iatas=None) -> folium.Map:
     )
     m.get_root().html.add_child(folium.Element(legend_html))
 
-    # Expose Americas metadata to JS
+    # Expose metadata to JS
     coords_json = json.dumps(meta, separators=(",", ":"))
     m.get_root().html.add_child(
         folium.Element(
@@ -479,15 +492,6 @@ def build_map(target_iata=None, highlight_iatas=None) -> folium.Map:
         offset_y = -int(offset_y_base * LABEL_OFFSET_SCALE)
 
         lvl = r.aca_level if r.aca_level in PALETTE else "Unknown"
-
-        city = ""
-        try:
-            city = str(r.get("municipality") or "").strip()
-        except Exception:
-            city = ""
-
-        title_line = r.iata if not city else f"{r.iata}, {city}"
-
         dot = folium.CircleMarker(
             [lat, lon],
             radius=float(radius),
@@ -497,9 +501,12 @@ def build_map(target_iata=None, highlight_iatas=None) -> folium.Map:
             fill_color=PALETTE.get(lvl, "#666"),
             fill_opacity=float(fill_opacity),
             popup=folium.Popup(
-                "<b>{title}</b><br>ACA: <b>{lvl}</b><br>Country: {ctry}".format(
-                    title=title_line,
-                    lvl=lvl if lvl != "Unknown" else "N/A",
+                "<b>{airport}</b><br>IATA: {iata}<br>ACA: <b>{lvl}</b><br>Country: {ctry}".format(
+                    airport=r.airport
+                    if pd.notna(r.get("airport")) and str(r.get("airport")).strip()
+                    else r.iata,
+                    iata=r.iata,
+                    lvl=lvl,
                     ctry=r.get("country", ""),
                 ),
                 max_width=320,
@@ -567,7 +574,7 @@ def build_map(target_iata=None, highlight_iatas=None) -> folium.Map:
       const map  = window[MAP_NAME];
       const pane = map.getPanes().tooltipPane;
 
-      // Load full Americas metadata
+      // Load full metadata
       let ACA_META = {};
       try {
         const metaScript = document.getElementById('aca-map-data');
