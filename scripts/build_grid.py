@@ -357,7 +357,7 @@ def build_grid(
     regional_html = _grid_html(regional, "total_passengers", target_total, target_iata)
     international_html = _grid_html(international, "total_passengers", target_total, target_iata)
 
-    header_title = f"{target_iata} - overview of airports with similar throughput."
+    header_title = f"{target_iata} - Peer airports by throughput"
     header_meta  = f"Target: {target_iata} - {_fmt_int(target_total)} passengers"
     doc_title = f"{target_iata} - Airports with similar passenger throughput"
 
@@ -370,7 +370,7 @@ def build_grid(
     regional_section = f"""
     <div class="row">
       <div class="header">
-        <h3>{target_iata} - regional peers by similar throughput ({target_region})</h3>
+        <h3>Regional peers ({target_region})</h3>
       </div>
       <div class="grid">{regional_html}</div>
     </div>"""
@@ -380,7 +380,7 @@ def build_grid(
         international_section = f"""
     <div class="row">
       <div class="header">
-        <h3>{target_iata} - international peers by similar throughput</h3>
+        <h3>International peers</h3>
       </div>
       <div class="grid">{international_html}</div>
     </div>"""
