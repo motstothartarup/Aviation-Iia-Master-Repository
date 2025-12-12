@@ -4,12 +4,13 @@
 # and 5 closest airports out of region, by total passengers.
 # Exposes build_grid(...). Also runnable as a script to write docs/grid.html.
 
-import os, re, argparse
+import os, re, argparse, io
 import numpy as np  # kept in case you later extend logic
 import pandas as pd
+import requests
+from bs4 import BeautifulSoup
 
 EXCEL_SHEET = "Working Global"
-COUNTRY_REGION_MAP_CSV = os.path.join("data", "country_region_map.csv")
 
 IN_REGION_N = 10
 OUT_REGION_N = 5
@@ -46,7 +47,7 @@ CSS = """
 }
 .grid{
   display:grid;
-  grid-template-columns:repeat(5,minmax(140px,1fr)); /* 5 columns, 3 rows for 15 tiles */
+  grid-template-columns:repeat(5,minmax(140px,1fr));
   gap:var(--gap);
 }
 .chip{
@@ -94,12 +95,6 @@ CSS = """
 def _norm(s):
     return re.sub(r"\s+"," ",str(s)).strip().lower()
 
-def _pick(df, cands):
-    for c in cands:
-        if c in df.columns:
-            return c
-    return None
-
 def _fmt_int(n):
     try:
         return f"{int(round(float(n))):,}"
@@ -113,6 +108,116 @@ def _fmt_pct(x, signed=False, decimals=1):
     sign = "+" if (signed and val >= 0) else ""
     return f"{sign}{val:.{decimals}f}%"
 
+def _dev(val, target):
+    """Percentage deviation vs target, as a percent of target."""
+    if pd.isna(val) or pd.isna(target):
+        return ""
+    if abs(target) < 1e-9:
+        return ""
+    diff_pct = (float(val) - float(target)) / float(target) * 100.0
+    return _fmt_pct(diff_pct, signed=True, decimals=1)
+
+def _resolve_sheet_name(excel_path: str, desired: str) -> str:
+    xl = pd.ExcelFile(excel_path)
+    want = (desired or "").strip().lower()
+    for s in xl.sheet_names:
+        if (s or "").strip().lower() == want:
+            return s
+    raise ValueError(f"Worksheet named '{desired}' not found. Available sheets: {xl.sheet_names}")
+
+def fetch_aca_html(timeout: int = 45) -> str:
+    url = "https://www.airportcarbonaccreditation.org/accredited-airports/"
+    headers = {
+        "User-Agent": "Mozilla/5.0 (compatible; ACA-Grid-Bot/1.0)",
+        "Accept": "text/html,application/xhtml+xml",
+    }
+    r = requests.get(url, headers=headers, timeout=timeout)
+    r.raise_for_status()
+    return r.text
+
+def parse_aca_regions(html: str) -> pd.DataFrame:
+    """
+    Return dataframe with columns: iata, region_group
+    Using ACA Region to derive region_group buckets:
+      - North America + Latin America & the Caribbean -> Americas
+      - Europe -> Europe
+      - UKIMEA -> UKIMEA
+      - Asia Pacific -> Asia Pacific
+      - else -> Other
+    """
+    soup = BeautifulSoup(html, "lxml")
+    dfs = []
+
+    table = soup.select_one(".airports-listview table")
+    if table is not None:
+        try:
+            dfs = pd.read_html(io.StringIO(str(table)))
+        except Exception:
+            dfs = []
+
+    if not dfs:
+        all_tables = pd.read_html(html)
+        target = None
+        want = {"airport", "airport code", "country", "region", "level"}
+        for df in all_tables:
+            cols = {str(c).strip().lower() for c in df.columns}
+            if want.issubset(cols):
+                target = df
+                break
+        if target is None:
+            raise RuntimeError("ACA table not found on the page.")
+        dfs = [target]
+
+    raw = dfs[0]
+    aca = raw.rename(
+        columns={
+            "Airport code": "iata",
+            "Region": "region",
+        }
+    )[["iata", "region"]].copy()
+
+    aca["iata"] = aca["iata"].astype(str).str.strip().str.upper()
+    aca["region"] = aca["region"].astype(str).str.strip()
+
+    def region_group(r: str) -> str:
+        if r in ("North America", "Latin America & the Caribbean"):
+            return "Americas"
+        if r == "Europe":
+            return "Europe"
+        if r == "UKIMEA":
+            return "UKIMEA"
+        if r == "Asia Pacific":
+            return "Asia Pacific"
+        return "Other"
+
+    aca["region_group"] = aca["region"].map(region_group)
+    aca = aca.dropna(subset=["iata"]).drop_duplicates(subset=["iata"], keep="first")
+    return aca[["iata", "region_group"]]
+
+def _fallback_region_from_country(country: str) -> str:
+    """
+    Minimal fallback for airports not present in ACA table.
+    This is intentionally small to avoid a large embedded mapping.
+    """
+    c = (country or "").strip().lower()
+
+    if c in ("united states", "canada", "mexico"):
+        return "Americas"
+
+    if c in ("united kingdom", "england", "scotland", "wales", "northern ireland",
+             "ireland", "united arab emirates", "saudi arabia", "qatar", "oman",
+             "kuwait", "bahrain", "jordan", "israel", "lebanon", "turkey"):
+        return "UKIMEA"
+
+    # Per your requirement: India belongs with UK + Middle East bucket
+    if c == "india":
+        return "UKIMEA"
+
+    if c == "australia" or c == "new zealand":
+        return "Asia Pacific"
+
+    return "Unknown"
+
 def _load_aci(excel_path: str) -> pd.DataFrame:
     """
     Load ACI Excel from the 'Working Global' tab.
@@ -124,58 +229,47 @@ def _load_aci(excel_path: str) -> pd.DataFrame:
       - Airport Code (IATA): F
       - Total Passengers: M
     """
-    # Header row is Excel row 3 -> header=2
+    sheet = _resolve_sheet_name(excel_path, EXCEL_SHEET)
+
     df = pd.read_excel(
         excel_path,
-        sheet_name=EXCEL_SHEET,
+        sheet_name=sheet,
         header=2,
         usecols="A,C,F,M",
     ).copy()
 
-    # Normalize and rename to stable internal names
     df.columns = ["rank", "country", "iata", "total_passengers"]
 
     df["country"] = df["country"].astype(str).str.strip()
     df["iata"] = df["iata"].astype(str).str.strip().str.upper()
     df["total_passengers"] = pd.to_numeric(df["total_passengers"], errors="coerce")
 
-    # Basic cleanup
     df = df.dropna(subset=["iata", "country", "total_passengers"]).copy()
     df = df[df["iata"].astype(str).str.len().between(2, 4)].copy()
     df = df.drop_duplicates(subset=["iata"], keep="first").reset_index(drop=True)
 
-    # Region grouping via mapping CSV
-    if not os.path.exists(COUNTRY_REGION_MAP_CSV):
-        raise RuntimeError(f"Missing country-to-region mapping file: {COUNTRY_REGION_MAP_CSV}")
+    # Derive region_group from ACA by IATA
+    try:
+        aca_html = fetch_aca_html()
+        aca_regions = parse_aca_regions(aca_html)
+        df = df.merge(aca_regions, on="iata", how="left")
+    except Exception:
+        df["region_group"] = None
 
-    m = pd.read_csv(COUNTRY_REGION_MAP_CSV)
-    m = m.rename(columns={c: _norm(c) for c in m.columns}).copy()
+    # Fallback for missing region_group
+    df["region_group"] = df["region_group"].fillna("")
+    missing_mask = df["region_group"].astype(str).str.strip().eq("")
+    if missing_mask.any():
+        df.loc[missing_mask, "region_group"] = df.loc[missing_mask, "country"].map(_fallback_region_from_country)
 
-    c_m_country = _pick(m, ["country"])
-    c_m_region  = _pick(m, ["region_group", "region", "group"])
-    if not (c_m_country and c_m_region):
-        raise RuntimeError(
-            f"Mapping CSV must include columns: country, region_group. Found: {list(m.columns)}"
-        )
+    # Enforce India rule even if ACA mapping differs
+    india_mask = df["country"].astype(str).str.strip().str.lower().eq("india")
+    if india_mask.any():
+        df.loc[india_mask, "region_group"] = "UKIMEA"
 
-    m = m[[c_m_country, c_m_region]].copy()
-    m.columns = ["country", "region_group"]
-    m["country"] = m["country"].astype(str).str.strip()
-    m["region_group"] = m["region_group"].astype(str).str.strip()
-
-    df = df.merge(m, on="country", how="left")
     df["region_group"] = df["region_group"].fillna("Unknown").astype(str).str.strip()
 
     return df
-
-def _dev(val, target):
-    """Percentage deviation vs target, as a percent of target."""
-    if pd.isna(val) or pd.isna(target):
-        return ""
-    if abs(target) < 1e-9:
-        return ""
-    diff_pct = (float(val) - float(target)) / float(target) * 100.0
-    return _fmt_pct(diff_pct, signed=True, decimals=1)
 
 def _grid_html(rows, metric_col, target_val, origin_iata, out_of_region=None):
     chips = []
@@ -210,14 +304,24 @@ def _nearest_sets(df, iata, in_n=IN_REGION_N, out_n=OUT_REGION_N):
     Throughput-only similarity with region split:
       - in_n closest airports within the target's region_group
       - out_n closest airports outside the target's region_group
-    Returns: target_row, peers_df, union_set, out_of_region_set
+
+    If target region_group is Unknown, fall back to 15 closest overall.
     """
     t = df.loc[df["iata"] == iata].iloc[0]
     cand = df[df["iata"] != iata].copy()
 
-    target_region = str(t.get("region_group", "Unknown"))
+    target_region = str(t.get("region_group", "Unknown")).strip() or "Unknown"
 
     cand = cand.assign(abs_diff_pax=(cand["total_passengers"] - t["total_passengers"]).abs())
+
+    if target_region.lower() == "unknown":
+        top_all = (
+            cand.sort_values(["abs_diff_pax", "total_passengers"], ascending=[True, False])
+                .drop_duplicates(subset=["iata"], keep="first")
+                .head(in_n + out_n)
+        )
+        union = {iata} | set(top_all["iata"].astype(str).str.upper().tolist())
+        return t, top_all, union, set()
 
     cand_in = cand[cand["region_group"] == target_region].copy()
     cand_out = cand[cand["region_group"] != target_region].copy()
@@ -235,7 +339,6 @@ def _nearest_sets(df, iata, in_n=IN_REGION_N, out_n=OUT_REGION_N):
 
     peers = pd.concat([top_in, top_out], ignore_index=True)
     out_of_region = set(top_out["iata"].astype(str).str.upper().tolist())
-
     union = {iata} | set(peers["iata"].astype(str).str.upper().tolist())
     return t, peers, union, out_of_region
 
