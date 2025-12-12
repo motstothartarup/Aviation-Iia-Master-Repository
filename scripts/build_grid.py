@@ -106,37 +106,34 @@ def _load_aci(excel_path: str) -> pd.DataFrame:
     """
     Load ACI Excel and return a DataFrame with:
       - iata
-      - name
-      - state
+      - citystate (optional)
+      - country (optional)
       - total_passengers
+
+    Does not rely on airport name or other omitted columns.
     """
-    raw = pd.read_excel(excel_path, header=2)
+    raw = pd.read_excel(excel_path, sheet_name="Working Global", header=2)
     df = raw.rename(columns={c: _norm(c) for c in raw.columns}).copy()
 
     c_country   = _pick(df, ["country"])
     c_citystate = _pick(df, ["city/state", "citystate", "city, state", "city / state"])
-    c_airport   = _pick(df, ["airport name", "airport"])
     c_iata      = _pick(df, ["airport code", "iata", "code"])
-    c_total     = _pick(df, ["total passengers", "passengers total", "total pax"])
-    c_yoy       = _pick(df, ["% chg 2024-2023", "% chg 2024 - 2023",
-                             "% chg 2023-2022", "yoy %", "% change"])
+    c_total     = _pick(df, ["total passengers", "passengers total", "total pax", "total passenger"])
+
+    df["iata"]  = df[c_iata].astype(str).str.upper() if c_iata else ""
+    df["total_passengers"] = pd.to_numeric(df[c_total], errors="coerce") if c_total else np.nan
 
     if c_country:
-        df = df[df[c_country].astype(str).str.contains("United States", case=False, na=False)]
+        df["country"] = df[c_country].astype(str)
+    else:
+        df["country"] = None
 
-    def _state(s):
-        if not isinstance(s, str):
-            return None
-        parts = re.split(r"\s+", s.strip())
-        return parts[-1] if parts else None
+    if c_citystate:
+        df["citystate"] = df[c_citystate].astype(str)
+    else:
+        df["citystate"] = None
 
-    df["state"] = df[c_citystate].apply(_state) if c_citystate else None
-    df["name"]  = df[c_airport].astype(str)
-    df["iata"]  = df[c_iata].astype(str).str.upper()
-    df["total_passengers"] = pd.to_numeric(df[c_total], errors="coerce")
-    df["yoy_growth_pct"]   = pd.to_numeric(df[c_yoy], errors="coerce") if c_yoy else np.nan
-
-    df = df.dropna(subset=["iata", "state", "total_passengers"]).reset_index(drop=True)
+    df = df.dropna(subset=["iata", "total_passengers"]).reset_index(drop=True)
 
     return df
 
@@ -209,9 +206,17 @@ def build_grid(
 
     total_html = _grid_html(r_total, "total_passengers", target_total, target_iata)
 
-    airport_name = str(target.get("name", target_iata))
-    header_title = f"{airport_name} – overview of airports with similar throughput."
-    header_meta  = f"Target: {target_iata} – {_fmt_int(target_total)} passengers"
+    city = ""
+    try:
+        v = df.loc[df["iata"] == target_iata, "citystate"].iloc[0]
+        city = str(v).strip() if v is not None else ""
+    except Exception:
+        city = ""
+
+    target_label = f"{target_iata} ({city})" if city else target_iata
+
+    header_title = f"{target_label} – overview of airports with similar throughput."
+    header_meta  = f"Target: {target_label} – {_fmt_int(target_total)} passengers"
 
     doc_title = f"{target_iata} – Airports with similar passenger throughput"
 
@@ -247,7 +252,7 @@ def build_grid(
 
 if __name__ == "__main__":
     ap = argparse.ArgumentParser()
-    ap.add_argument("--excel", default="data/ACI_2024_NA_Traffic.xlsx")
+    ap.add_argument("--excel", default="data/Copy of ACI 2024 North America Traffic Report (1).xlsx")
     ap.add_argument("--iata", required=True)
     ap.add_argument("--out", default="docs/grid.html")
     a = ap.parse_args()
