@@ -11,7 +11,7 @@ from build_grid import build_grid
 from build_aca_table import build_aca_table_html
 from build_map import build_map
 
-EXCEL_PATH = "data/ACI_2024_NA_Traffic.xlsx"
+EXCEL_PATH = "data/Copy of ACI 2024 North America Traffic Report (1).xlsx"
 DOCS_DIR = "docs"
 RUNS_DIR = os.path.join(DOCS_DIR, "runs")
 MANIFEST = os.path.join(RUNS_DIR, "index.json")
