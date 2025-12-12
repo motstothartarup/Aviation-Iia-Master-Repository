@@ -14,29 +14,7 @@ import pandas as pd
 import requests
 from bs4 import BeautifulSoup
 
-
-EXCEL_SHEET_WANTED = "Working Global"
-
-def _resolve_sheet_name(excel_path: str, wanted: str = EXCEL_SHEET_WANTED) -> str:
-    xls = pd.ExcelFile(excel_path)
-    want = " ".join(str(wanted).split()).strip().lower()
-
-    # exact match ignoring case/whitespace
-    for s in xls.sheet_names:
-        sn = " ".join(str(s).split()).strip().lower()
-        if sn == want:
-            return s
-
-    # fallback: contains match ignoring case/whitespace
-    for s in xls.sheet_names:
-        sn = " ".join(str(s).split()).strip().lower()
-        if want in sn:
-            return s
-
-    raise RuntimeError(
-        f"Worksheet named '{wanted}' not found. Available sheets: {xls.sheet_names}"
-    )
-
+EXCEL_SHEET = "Working Global"
 
 IN_REGION_N = 10
 OUT_REGION_N = 5
