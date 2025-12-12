@@ -1,9 +1,10 @@
 <!doctype html><meta charset="utf-8">
-<title>LAX — Grid + ACA + Map</title>
+<title>LAX - Grid + ACA + Map</title>
 <meta name="viewport" content="width=device-width, initial-scale=1"/>
 <style>
   :root {
     --bg:#f6f8fb; --ink:#1f2937; --muted:#6b7280; --border:#e5e7eb; --card:#fff; --accent:#0d6efd;
+    --ok:#16a34a; --warn:#f59e0b; --bad:#dc2626;
   }
   html,body { margin:0; padding:0; background:var(--bg); color:var(--ink); font:16px/1.45 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Arial,sans-serif; }
   .wrap { max-width:1200px; margin:0 auto; padding:16px 16px 20px 16px; }
@@ -14,6 +15,9 @@
     border:1px solid var(--border); background:#fff; cursor:pointer; font-size:14px; text-decoration:none; color:inherit;
   }
   .btn:hover { background:#fafbfc; }
+  .btn-primary { background:var(--accent); color:#fff; border-color:var(--accent); }
+  .btn-primary:hover { filter:brightness(0.95); }
+  .btn-danger { background:#fff; color:var(--bad); border-color:#fecaca; }
   .card { background:var(--card); border:1px solid var(--border); border-radius:12px; box-shadow:0 2px 10px rgba(0,0,0,.05); padding:10px 10px; margin:12px 0; }
   .muted { color:var(--muted); font-size:13px; margin-bottom:6px; }
   iframe { width:100%; height:620px; border:0; border-radius:12px; box-shadow:0 2px 10px rgba(0,0,0,.05); background:#fff; }
@@ -24,30 +28,34 @@
     position:fixed; inset:0; background:rgba(0,0,0,.35); display:none; align-items:center; justify-content:center; z-index:9999;
   }
   .modal {
-    width:min(680px, 94vw); background:#fff; border-radius:12px; box-shadow:0 20px 50px rgba(0,0,0,.25);
+    width:min(720px, 94vw); background:#fff; border-radius:12px; box-shadow:0 20px 50px rgba(0,0,0,.25);
     border:1px solid var(--border); padding:16px;
   }
   .modal h3 { margin:0 0 8px 0; font-size:18px; }
   .grid { display:grid; grid-template-columns: 1fr 1fr; gap:12px; }
+  @media (max-width: 720px) { .grid { grid-template-columns: 1fr; } }
   label { display:block; font-size:13px; color:#374151; margin-bottom:4px; }
   input, select {
     width:100%; font:14px/1.2 inherit; padding:8px 10px; border-radius:8px; border:1px solid var(--border); background:#fff;
   }
   .row { display:flex; gap:10px; align-items:center; flex-wrap:wrap; }
-  .actions { display:flex; gap:10px; justify-content:flex-end; margin-top:12px; }
-  .btn-primary { background:var(--accent); color:#fff; border-color:var(--accent); }
-  .btn-primary:hover { filter:brightness(0.95); }
-  .hint { font-size:12px; color:var(--muted); }
-  .statusline { font-size:12px; color:var(--muted); margin-top:8px; }
-  .statusline strong { color:var(--ink); }
+  .actions { display:flex; gap:10px; justify-content:flex-end; margin-top:12px; flex-wrap:wrap; }
+  .hint { font-size:12px; color:var(--muted); margin-top:6px; }
+  .status {
+    margin-top:8px; padding:8px 10px; border-radius:10px; border:1px solid var(--border); background:#fafafa; font-size:13px;
+  }
+  .status.ok { border-color:#bbf7d0; background:#f0fdf4; color:#14532d; }
+  .status.warn { border-color:#fde68a; background:#fffbeb; color:#713f12; }
+  .status.bad { border-color:#fecaca; background:#fef2f2; color:#7f1d1d; }
+  .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; }
 </style>
 
 <div class="wrap">
   <div class="topbar">
-    <h2 id="title">LAX — Grid + ACA + Map</h2>
+    <h2 id="title">LAX - Grid + ACA + Map</h2>
     <div class="row">
-      <button id="btnReset" class="btn" type="button">Reset / Choose another run</button>
-      <button id="btnRunOpen" class="btn btn-primary" type="button">Run new build</button>
+      <button id="btnReset" class="btn" type="button">Reset, choose another run</button>
+      <button id="btnAction" class="btn btn-primary" type="button">Run new build</button>
     </div>
   </div>
 
@@ -57,64 +65,42 @@
   </div>
 
   <div class="card">
-    <div class="muted">ACA scores for airports with similar throughput (LAX)</div>
+    <div class="muted">ACA scores for airports with similar throughput</div>
     <iframe id="acaFrame" src="aca_table.html" title="ACA scores table"></iframe>
   </div>
 
   <div class="card">
-    <div class="muted">ACA map (Americas)</div>
+    <div class="muted">ACA map</div>
     <iframe id="mapFrame" src="aca_map.html" title="ACA Map"></iframe>
   </div>
 </div>
 
-<!-- Reset Modal -->
+<!-- Modal -->
 <div class="modal-backdrop" id="modalBg" aria-hidden="true">
   <div class="modal" role="dialog" aria-modal="true" aria-labelledby="modalTitle">
-    <h3 id="modalTitle">Reset / Choose another run</h3>
+    <h3 id="modalTitle">Runs</h3>
+
     <div class="grid">
       <div>
         <label for="runSelect">Pick from previous runs</label>
         <select id="runSelect"><option value="">Loading…</option></select>
         <div class="hint">Switch instantly to any run that is already built.</div>
       </div>
+
       <div>
-        <label>Tip</label>
+        <label for="iataInput">Run a new build</label>
+        <input id="iataInput" inputmode="latin" autocapitalize="characters" maxlength="4" placeholder="Enter IATA, for example LAX" />
         <div class="hint">
-          To generate a new run from this page, close this modal and click “Run new build” in the top bar.
+          This triggers a server run, then the new output appears in the list on the left when it is finished.
         </div>
+        <div id="runStatus" class="status" style="display:none;"></div>
       </div>
     </div>
+
     <div class="actions">
       <button class="btn" id="btnClose" type="button">Close</button>
-      <button class="btn btn-primary" id="btnApplyRun" type="button">View selected run</button>
-    </div>
-  </div>
-</div>
-
-<!-- Run Modal -->
-<div class="modal-backdrop" id="runModalBg" aria-hidden="true">
-  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="runModalTitle">
-    <h3 id="runModalTitle">Run new build</h3>
-
-    <div class="grid">
-      <div>
-        <label for="iataInput">IATA code</label>
-        <input id="iataInput" inputmode="latin" autocomplete="off" placeholder="LAX" maxlength="4"/>
-        <div class="hint">Enter a valid airport IATA code, then click “Run”.</div>
-      </div>
-      <div>
-        <label>What happens</label>
-        <div class="hint">
-          This will trigger a build and stream results into <code>docs/live/</code>. This page will switch to the live outputs automatically.
-        </div>
-      </div>
-    </div>
-
-    <div class="statusline" id="runStatus" aria-live="polite"></div>
-
-    <div class="actions">
-      <button class="btn" id="btnRunClose" type="button">Close</button>
-      <button class="btn btn-primary" id="btnRun" type="button">Run</button>
+      <button class="btn" id="btnApplyRun" type="button">View selected run</button>
+      <button class="btn btn-primary" id="btnStartRun" type="button">Start run</button>
     </div>
   </div>
 </div>
@@ -123,6 +109,9 @@
 (function(){
   const runManifestUrl = "runs/index.json";
 
+  // Cloudflare Worker endpoint (POST only). If you later add a path like /run, change this constant.
+  const workerRunUrl = "https://aviation-iia-run-endpoint.motstothart-arup.workers.dev";
+
   const gridFrame = document.getElementById('gridFrame');
   const acaFrame  = document.getElementById('acaFrame');
   const mapFrame  = document.getElementById('mapFrame');
@@ -130,26 +119,14 @@
 
   const modalBg   = document.getElementById('modalBg');
   const btnReset  = document.getElementById('btnReset');
+  const btnAction = document.getElementById('btnAction');
   const btnClose  = document.getElementById('btnClose');
   const runSelect = document.getElementById('runSelect');
   const btnApply  = document.getElementById('btnApplyRun');
 
-  const btnRunOpen   = document.getElementById('btnRunOpen');
-  const runModalBg   = document.getElementById('runModalBg');
-  const btnRunClose  = document.getElementById('btnRunClose');
-  const btnRun       = document.getElementById('btnRun');
-  const iataInput    = document.getElementById('iataInput');
-  const runStatus    = document.getElementById('runStatus');
-
-  // Live outputs written by scripts/run_all.py
-  const LIVE_BASE   = "live";
-  const LIVE_STATUS = LIVE_BASE + "/status.json";
-
-  // IMPORTANT:
-  // This page is static. To truly “run” from the page, you need a tiny HTTP endpoint
-  // that triggers your build (for example, a Cloudflare Worker / Netlify Function).
-  // Set RUN_ENDPOINT to that URL. It must accept POST JSON: {"iata":"LAX"}.
-  const RUN_ENDPOINT = ""; // <-- set this to your endpoint URL
+  const iataInput = document.getElementById('iataInput');
+  const btnStart  = document.getElementById('btnStartRun');
+  const runStatus = document.getElementById('runStatus');
 
   // Relay ACA table clicks to the map iframe
   window.addEventListener('message', (ev) => {
@@ -171,40 +148,40 @@
   function closeModal(){
     modalBg.style.display = "none";
     modalBg.setAttribute("aria-hidden", "true");
+    setStatus("", "");
   }
 
-  function openRunModal(){
-    runModalBg.style.display = "flex";
-    runModalBg.setAttribute("aria-hidden", "false");
-    runStatus.textContent = "";
-    iataInput.value = (titleEl.textContent || "").split("—", 1)[0].trim().toUpperCase();
-    iataInput.focus();
-    iataInput.select();
-  }
-  function closeRunModal(){
-    runModalBg.style.display = "none";
-    runModalBg.setAttribute("aria-hidden", "true");
+  function setStatus(kind, html){
+    if (!html){
+      runStatus.style.display = "none";
+      runStatus.className = "status";
+      runStatus.innerHTML = "";
+      return;
+    }
+    runStatus.style.display = "block";
+    runStatus.className = "status " + (kind || "");
+    runStatus.innerHTML = html;
   }
 
   btnReset.addEventListener('click', openModal);
+  btnAction.addEventListener('click', openModal);
   btnClose.addEventListener('click', closeModal);
   modalBg.addEventListener('click', (e)=>{
     if (e.target === modalBg) closeModal();
   });
 
-  btnRunOpen.addEventListener('click', openRunModal);
-  btnRunClose.addEventListener('click', closeRunModal);
-  runModalBg.addEventListener('click', (e)=>{
-    if (e.target === runModalBg) closeRunModal();
-  });
+  async function fetchManifest(){
+    const res = await fetch(runManifestUrl, { cache:"no-store" });
+    if (!res.ok) throw new Error("HTTP " + res.status);
+    const data = await res.json();
+    runsCache = (data && data.runs) ? data.runs : [];
+    return runsCache;
+  }
 
   async function loadRuns(){
     try{
-      const res = await fetch(runManifestUrl, {cache:"no-store"});
-      if (!res.ok) throw new Error("HTTP " + res.status);
-      const data = await res.json();
-      runsCache = data.runs || [];
-      renderRunOptions(runsCache);
+      const runs = await fetchManifest();
+      renderRunOptions(runs);
     } catch(err){
       runSelect.innerHTML = '<option value="">No manifest found</option>';
     }
@@ -217,121 +194,112 @@
     }
     runs.sort((a,b)=> (b.ts||0) - (a.ts||0));
     runSelect.innerHTML = runs.map(r=>{
-      const label = `${r.iata} — ${new Date((r.ts||0)*1000).toLocaleString()}`;
+      const label = `${(r.iata||"").toUpperCase()} - ${new Date((r.ts||0)*1000).toLocaleString()}`;
       return `<option value="${r.path}">${label}</option>`;
     }).join("");
   }
 
-  function setFramesToRunPath(p, iata){
+  function applyRunPath(p){
+    if (!p) return;
+    const run = runsCache.find(r => r.path === p) || {};
     gridFrame.src = p + "/grid.html";
     acaFrame.src  = p + "/aca_table.html";
     mapFrame.src  = p + "/aca_map.html";
-    titleEl.textContent = `${iata} — Grid + ACA + Map`;
+    const iata  = (run.iata || "").toUpperCase();
+    titleEl.textContent = `${iata} - Grid + ACA + Map`;
   }
 
   btnApply.addEventListener('click', ()=>{
     const p = runSelect.value;
     if (!p) return;
-    const run = runsCache.find(r => r.path === p) || {};
-    const iata  = (run.iata || "").toUpperCase();
-    setFramesToRunPath(p, iata || ""); 
+    applyRunPath(p);
     closeModal();
   });
 
-  function bust(url){
-    const sep = (url.indexOf("?") >= 0) ? "&" : "?";
-    return url + sep + "v=" + Date.now();
+  function normIata(x){
+    return (x || "").toString().trim().toUpperCase().replace(/[^A-Z0-9]/g,"").slice(0,4);
   }
 
-  function setFramesToLive(iata){
-    gridFrame.src = bust(LIVE_BASE + "/grid.html");
-    acaFrame.src  = bust(LIVE_BASE + "/aca_table.html");
-    mapFrame.src  = bust(LIVE_BASE + "/aca_map.html");
-    titleEl.textContent = `${iata} — Grid + ACA + Map`;
-  }
-
-  async function pollLiveUntilDone(expectedIata, timeoutMs){
-    const start = Date.now();
-    while (Date.now() - start < timeoutMs){
-      try{
-        const res = await fetch(bust(LIVE_STATUS), {cache:"no-store"});
-        if (res.ok){
-          const st = await res.json();
-          const ok = !!st.ok;
-          const iata = (st.iata || "").toUpperCase();
-          const status = (st.status || "");
-          if (iata === expectedIata && ok){
-            return { ok:true, iata, status:"complete" };
-          }
-          if (iata === expectedIata && status){
-            runStatus.innerHTML = `Status: <strong>${status}</strong> for <strong>${iata}</strong>`;
-          } else if (status){
-            runStatus.innerHTML = `Status: <strong>${status}</strong>`;
-          }
-        }
-      } catch(e){}
-      await new Promise(r => setTimeout(r, 1200));
-    }
-    return { ok:false, iata:expectedIata, status:"timeout" };
-  }
-
-  async function triggerRun(iata){
-    if (!RUN_ENDPOINT){
-      runStatus.innerHTML = 'Run endpoint is not configured. Set <code>RUN_ENDPOINT</code> in this file.';
+  async function startRun(){
+    const iata = normIata(iataInput.value);
+    if (!iata){
+      setStatus("warn", "Enter a valid IATA code.");
       return;
     }
 
-    runStatus.innerHTML = `Triggering build for <strong>${iata}</strong>…`;
-    btnRun.disabled = true;
+    btnStart.disabled = true;
+    btnStart.textContent = "Starting…";
+    const startTs = Math.floor(Date.now() / 1000);
+
+    setStatus("warn", `Submitting run for <span class="mono">${iata}</span>.`);
 
     try{
-      const res = await fetch(RUN_ENDPOINT, {
+      const res = await fetch(workerRunUrl, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ iata: iata })
+        headers: { "content-type":"application/json" },
+        body: JSON.stringify({ iata })
       });
+
+      const text = await res.text();
+      let payload = null;
+      try { payload = JSON.parse(text); } catch(e) {}
+
       if (!res.ok){
-        runStatus.innerHTML = `Trigger failed (HTTP ${res.status}).`;
-        btnRun.disabled = false;
+        setStatus("bad", `Run request failed (HTTP ${res.status}).<br><span class="mono">${text.replace(/</g,"&lt;")}</span>`);
         return;
       }
+
+      setStatus("warn", `Run accepted for <span class="mono">${iata}</span>. Waiting for outputs to appear in the run list.`);
+
+      // Poll runs/index.json until we see a run for this IATA with a ts >= startTs.
+      const found = await pollForRun(iata, startTs, 60, 3000);
+      if (!found){
+        setStatus("warn", `Still running. Check back in a minute, then click Close and reopen this panel to refresh the run list.`);
+        return;
+      }
+
+      await loadRuns();
+      renderRunOptions(runsCache);
+
+      // Auto-select newest matching run.
+      const matches = runsCache
+        .filter(r => (r.iata||"").toUpperCase() === iata)
+        .sort((a,b)=> (b.ts||0) - (a.ts||0));
+
+      if (matches.length){
+        applyRunPath(matches[0].path);
+        setStatus("ok", `Done. Loaded <span class="mono">${iata}</span>.`);
+        setTimeout(closeModal, 600);
+      } else {
+        setStatus("ok", `Done. Pick the new run from the list on the left.`);
+      }
+
     } catch(err){
-      runStatus.innerHTML = "Trigger failed (network error).";
-      btnRun.disabled = false;
-      return;
+      setStatus("bad", `Run request failed.<br><span class="mono">${(err && err.message) ? err.message : String(err)}</span>`);
+    } finally {
+      btnStart.disabled = false;
+      btnStart.textContent = "Start run";
     }
-
-    setFramesToLive(iata);
-    runStatus.innerHTML = `Build started for <strong>${iata}</strong>. Waiting for completion…`;
-
-    const done = await pollLiveUntilDone(iata, 12 * 60 * 1000);
-    if (done.ok){
-      runStatus.innerHTML = `Complete for <strong>${iata}</strong>. Switching to the new run snapshot…`;
-      await new Promise(r => setTimeout(r, 300));
-      // If the workflow also appended to runs/index.json, user can pick it later.
-      // We keep the page on live outputs by default, because they are the latest.
-      setFramesToLive(iata);
-      btnRun.disabled = false;
-      closeRunModal();
-      loadRuns();
-      return;
-    }
-
-    runStatus.innerHTML = `Still running, or status not found. You can keep this page open and refresh later.`;
-    btnRun.disabled = false;
   }
 
-  btnRun.addEventListener('click', ()=>{
-    const iata = (iataInput.value || "").trim().toUpperCase();
-    if (!iata) return;
-    triggerRun(iata);
-  });
-
-  iataInput.addEventListener('keydown', (e)=>{
-    if (e.key === "Enter"){
-      e.preventDefault();
-      btnRun.click();
+  async function pollForRun(iata, startTs, maxTries, delayMs){
+    for (let i = 0; i < maxTries; i++){
+      try{
+        const runs = await fetchManifest();
+        const hit = runs.some(r =>
+          (r.iata||"").toUpperCase() === iata &&
+          (r.ts||0) >= startTs
+        );
+        if (hit) return true;
+      } catch(e) {}
+      await new Promise(r => setTimeout(r, delayMs));
     }
+    return false;
+  }
+
+  btnStart.addEventListener('click', startRun);
+  iataInput.addEventListener('keydown', (e)=>{
+    if (e.key === "Enter") startRun();
   });
 
   loadRuns();
