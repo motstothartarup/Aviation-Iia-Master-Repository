@@ -1,7 +1,11 @@
 # scripts/build_grid.py
 # Output: Throughput-only list and grid from your ACI Excel.
-# For a given target IATA, finds 10 closest airports within the target region group
-# and 5 closest airports out of region, by total passengers.
+# For a given target IATA:
+#   - finds 10 closest airports within the target region group by total passengers
+#   - finds 5 closest airports out of region by total passengers
+# Renders TWO sections:
+#   1) Regional peers
+#   2) International (out-of-region) peers
 # Exposes build_grid(...). Also runnable as a script to write docs/grid.html.
 
 import os, re, argparse, io
@@ -84,10 +88,6 @@ CSS = """
 .chip.origin{
   box-shadow:0 0 0 2px rgba(231,76,60,.22) inset;
   border-color:#E74C3C;
-}
-.chip.oor{
-  box-shadow:0 0 0 2px rgba(13,110,253,.25) inset;
-  border-color:#0d6efd;
 }
 </style>
 """
@@ -209,11 +209,11 @@ def _fallback_region_from_country(country: str) -> str:
              "kuwait", "bahrain", "jordan", "israel", "lebanon", "turkey"):
         return "UKIMEA"
 
-    # Per your requirement: India belongs with UK + Middle East bucket
+    # Per requirement: India belongs with UK + Middle East bucket
     if c == "india":
         return "UKIMEA"
 
-    if c == "australia" or c == "new zealand":
+    if c in ("australia", "new zealand"):
         return "Asia Pacific"
 
     return "Unknown"
@@ -271,9 +271,8 @@ def _load_aci(excel_path: str) -> pd.DataFrame:
 
     return df
 
-def _grid_html(rows, metric_col, target_val, origin_iata, out_of_region=None):
+def _grid_html(rows, metric_col, target_val, origin_iata):
     chips = []
-    oor = set(out_of_region or [])
     for _, r in rows.iterrows():
         code = str(r["iata"])
         pax_val = r[metric_col]
@@ -283,12 +282,7 @@ def _grid_html(rows, metric_col, target_val, origin_iata, out_of_region=None):
         pax_html = f"<span class='pax'>{pax_txt} passengers</span>"
         dev_html = f"<span class='dev'>{dev_txt} vs target</span>" if dev_txt else "<span class='dev'>&nbsp;</span>"
 
-        if code == origin_iata:
-            cls = "chip origin"
-        elif code in oor:
-            cls = "chip oor"
-        else:
-            cls = "chip"
+        cls = "chip origin" if code == origin_iata else "chip"
 
         chips.append(
             f"<div class='{cls}'>"
@@ -301,19 +295,17 @@ def _grid_html(rows, metric_col, target_val, origin_iata, out_of_region=None):
 
 def _nearest_sets(df, iata, in_n=IN_REGION_N, out_n=OUT_REGION_N):
     """
-    Throughput-only similarity with region split:
-      - in_n closest airports within the target's region_group
-      - out_n closest airports outside the target's region_group
-
-    If target region_group is Unknown, fall back to 15 closest overall.
+    Returns:
+      target_row, regional_df, international_df, union_set
     """
     t = df.loc[df["iata"] == iata].iloc[0]
     cand = df[df["iata"] != iata].copy()
 
     target_region = str(t.get("region_group", "Unknown")).strip() or "Unknown"
-
     cand = cand.assign(abs_diff_pax=(cand["total_passengers"] - t["total_passengers"]).abs())
 
+    # If we cannot determine region, fall back to a single global list
+    # (regional populated, international empty).
     if target_region.lower() == "unknown":
         top_all = (
             cand.sort_values(["abs_diff_pax", "total_passengers"], ascending=[True, False])
@@ -321,7 +313,7 @@ def _nearest_sets(df, iata, in_n=IN_REGION_N, out_n=OUT_REGION_N):
                 .head(in_n + out_n)
         )
         union = {iata} | set(top_all["iata"].astype(str).str.upper().tolist())
-        return t, top_all, union, set()
+        return t, top_all, top_all.iloc[0:0].copy(), union
 
     cand_in = cand[cand["region_group"] == target_region].copy()
     cand_out = cand[cand["region_group"] != target_region].copy()
@@ -337,10 +329,8 @@ def _nearest_sets(df, iata, in_n=IN_REGION_N, out_n=OUT_REGION_N):
                .head(out_n)
     )
 
-    peers = pd.concat([top_in, top_out], ignore_index=True)
-    out_of_region = set(top_out["iata"].astype(str).str.upper().tolist())
-    union = {iata} | set(peers["iata"].astype(str).str.upper().tolist())
-    return t, peers, union, out_of_region
+    union = {iata} | set(pd.concat([top_in["iata"], top_out["iata"]]).astype(str).str.upper().tolist())
+    return t, top_in, top_out, union
 
 def build_grid(
     excel_path: str,
@@ -352,22 +342,23 @@ def build_grid(
     Selection rule:
       - 10 peers in the target's region_group
       - 5 peers out of region
+    Renders two sections: Regional peers and International peers.
     """
     df = _load_aci(excel_path)
     if df[df["iata"] == iata].empty:
         raise ValueError(f"IATA '{iata}' not found in ACI file.")
 
     target_iata = iata.upper()
-    target, peers, union, out_of_region = _nearest_sets(df, target_iata)
+    target, regional, international, union = _nearest_sets(df, target_iata)
 
     target_total = df.loc[df["iata"] == target_iata, "total_passengers"].iloc[0]
-    total_html = _grid_html(
-        peers, "total_passengers", target_total, target_iata, out_of_region=out_of_region
-    )
+    target_region = str(target.get("region_group", "Unknown")).strip() or "Unknown"
+
+    regional_html = _grid_html(regional, "total_passengers", target_total, target_iata)
+    international_html = _grid_html(international, "total_passengers", target_total, target_iata)
 
     header_title = f"{target_iata} - overview of airports with similar throughput."
     header_meta  = f"Target: {target_iata} - {_fmt_int(target_total)} passengers"
-
     doc_title = f"{target_iata} - Airports with similar passenger throughput"
 
     header = f"""
@@ -376,14 +367,31 @@ def build_grid(
       <div class="meta">{header_meta}</div>
     </div>"""
 
+    regional_section = f"""
+    <div class="row">
+      <div class="header">
+        <h3>{target_iata} - regional peers by similar throughput ({target_region})</h3>
+      </div>
+      <div class="grid">{regional_html}</div>
+    </div>"""
+
+    international_section = ""
+    if international is not None and not international.empty:
+        international_section = f"""
+    <div class="row">
+      <div class="header">
+        <h3>{target_iata} - international peers by similar throughput</h3>
+      </div>
+      <div class="grid">{international_html}</div>
+    </div>"""
+
     html = f"""<!doctype html><meta charset="utf-8">
 <title>{doc_title}</title>
 {CSS}
 <div class="container">
   {header}
-  <div class="row">
-    <div class="grid">{total_html}</div>
-  </div>
+  {regional_section}
+  {international_section}
 </div>"""
 
     if out_html:
@@ -391,7 +399,7 @@ def build_grid(
         with open(out_html, "w", encoding="utf-8") as f:
             f.write(html)
 
-    nearest_list = peers["iata"].tolist()
+    nearest_list = pd.concat([regional["iata"], international["iata"]]).tolist()
 
     return {
         "html": html,
