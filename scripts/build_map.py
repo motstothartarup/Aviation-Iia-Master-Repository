@@ -7,7 +7,7 @@
 #  - dynamic add/remove of markers in response to ACA table clicks.
 #
 # Fixes:
-#  - Do NOT restrict ACA data to Americas only (international peers get correct ACA colors)
+#  - Do NOT restrict ACA data to Americas Only (international peers get correct ACA colors)
 #  - Initial view opens to target's region group (from docs/grid.html)
 
 import io
