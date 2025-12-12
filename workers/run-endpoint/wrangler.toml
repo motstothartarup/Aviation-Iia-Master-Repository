@@ -1,3 +1,4 @@
 name = "aviation-iia-run-endpoint"
-main = "src/index.js"
+main = "workers/run-endpoint/src/index.js"
 compatibility_date = "2025-12-12"
+
