@@ -1,11 +1,18 @@
 # scripts/build_grid.py
 # Output: Throughput-only list and grid from your ACI Excel.
-# For a given target IATA, finds the 15 closest airports by total passengers.
+# For a given target IATA, finds the closest airports by total passengers,
+# split into 10 within the target region group and 5 out of region.
 # Exposes build_grid(...). Also runnable as a script to write docs/grid.html.
 
 import os, re, argparse
 import numpy as np  # kept in case you later extend logic
 import pandas as pd
+
+EXCEL_SHEET = "Working Global"
+COUNTRY_REGION_MAP_CSV = os.path.join("data", "country_region_map.csv")
+
+IN_REGION_N = 10
+OUT_REGION_N = 5
 
 CSS = """
 <style>
@@ -77,10 +84,12 @@ CSS = """
   box-shadow:0 0 0 2px rgba(231,76,60,.22) inset;
   border-color:#E74C3C;
 }
+.chip.oor{
+  box-shadow:0 0 0 2px rgba(13,110,253,.25) inset;
+  border-color:#0d6efd;
+}
 </style>
 """
-
-ACI_SHEET = "Working Global"
 
 def _norm(s):
     return re.sub(r"\s+"," ",str(s)).strip().lower()
@@ -104,84 +113,71 @@ def _fmt_pct(x, signed=False, decimals=1):
     sign = "+" if (signed and val >= 0) else ""
     return f"{sign}{val:.{decimals}f}%"
 
-def _read_working_global(excel_path: str) -> pd.DataFrame:
-    """
-    Read the 'Working Global' sheet with a best-effort header detection.
-    This avoids reliance on prior column layouts and supports pared-down columns.
-    """
-    raw = pd.read_excel(excel_path, sheet_name=ACI_SHEET, header=None)
-
-    # Find a likely header row within the first ~30 rows.
-    # Common marker: "Airport Code" somewhere in the row.
-    header_row = None
-    scan_n = min(30, len(raw))
-    for i in range(scan_n):
-        row = raw.iloc[i].astype(str).str.strip().str.lower()
-        if row.str.contains(r"\bairport\s*code\b", na=False).any():
-            header_row = i
-            break
-
-    if header_row is None:
-        # Fallback: assume the same header offset as older ACI exports.
-        raw2 = pd.read_excel(excel_path, sheet_name=ACI_SHEET, header=2)
-        return raw2
-
-    hdr = [_norm(x) for x in raw.iloc[header_row].tolist()]
-    df = raw.iloc[header_row + 1 :].copy()
-    df.columns = hdr
-    return df
-
 def _load_aci(excel_path: str) -> pd.DataFrame:
     """
     Load ACI Excel (Working Global tab) and return a DataFrame with:
       - iata
       - country
+      - region_group
       - total_passengers
-
-    This version does not rely on airport name or other omitted columns.
     """
-    raw = _read_working_global(excel_path)
+    # Try header=0 first (common for simplified tabs). Fallback to header=2 (legacy ACI style).
+    raw = None
+    for hdr in (0, 2):
+        try:
+            raw = pd.read_excel(excel_path, sheet_name=EXCEL_SHEET, header=hdr)
+            if raw is not None and len(raw.columns) > 0:
+                break
+        except Exception:
+            raw = None
+
+    if raw is None:
+        raise RuntimeError(f"Could not read sheet '{EXCEL_SHEET}' from: {excel_path}")
+
     df = raw.rename(columns={c: _norm(c) for c in raw.columns}).copy()
 
-    # Prefer named columns if present
     c_country = _pick(df, ["country"])
     c_iata    = _pick(df, ["airport code", "iata", "code"])
-    c_total   = _pick(df, ["total passengers", "passengers total", "total pax", "total passenger"])
+    c_total   = _pick(df, ["total passengers", "passengers", "total pax"])
 
-    # Fallback to fixed positions in the pared-down sheet:
-    # Rank = A (0), Country = C (2), Airport Code = F (5), Total Passengers = M (12)
-    if (c_country is None) or (c_iata is None) or (c_total is None):
-        df2 = pd.read_excel(excel_path, sheet_name=ACI_SHEET, header=None)
-        # Try to align to the first data row by finding the header row again
-        # and then selecting rows beneath it.
-        header_row = None
-        scan_n = min(30, len(df2))
-        for i in range(scan_n):
-            row = df2.iloc[i].astype(str).str.strip().str.lower()
-            if row.str.contains(r"\bairport\s*code\b", na=False).any():
-                header_row = i
-                break
-        start = (header_row + 1) if header_row is not None else 3
-        df = df2.iloc[start:].copy()
-        df = df.rename(
-            columns={
-                2: "country",
-                5: "airport code",
-                12: "total passengers",
-            }
+    if not (c_country and c_iata and c_total):
+        raise RuntimeError(
+            f"Missing required columns in '{EXCEL_SHEET}'. Found: {list(df.columns)}. "
+            f"Need: country, airport code/IATA, total passengers."
         )
-        c_country, c_iata, c_total = "country", "airport code", "total passengers"
 
-    df["country"] = df[c_country].astype(str) if c_country else ""
-    df["iata"] = df[c_iata].astype(str).str.upper() if c_iata else ""
-    df["total_passengers"] = pd.to_numeric(df[c_total], errors="coerce") if c_total else np.nan
+    out = pd.DataFrame()
+    out["country"] = df[c_country].astype(str).str.strip()
+    out["iata"] = df[c_iata].astype(str).str.strip().str.upper()
+    out["total_passengers"] = pd.to_numeric(df[c_total], errors="coerce")
 
-    # Keep only what we can reliably use
-    df["iata"] = df["iata"].astype(str).str.strip()
-    df = df[(df["iata"].notna()) & (df["iata"] != "")]
-    df = df.dropna(subset=["iata", "total_passengers"]).reset_index(drop=True)
+    out = out.dropna(subset=["iata", "country", "total_passengers"]).copy()
+    out = out[out["iata"].astype(str).str.len().between(2, 4)].copy()
+    out = out.drop_duplicates(subset=["iata"], keep="first").reset_index(drop=True)
 
-    return df[["iata", "country", "total_passengers"]].copy()
+    if not os.path.exists(COUNTRY_REGION_MAP_CSV):
+        raise RuntimeError(f"Missing country-to-region mapping file: {COUNTRY_REGION_MAP_CSV}")
+
+    m = pd.read_csv(COUNTRY_REGION_MAP_CSV)
+    m = m.rename(columns={c: _norm(c) for c in m.columns}).copy()
+
+    c_m_country = _pick(m, ["country"])
+    c_m_region  = _pick(m, ["region_group", "region", "group"])
+
+    if not (c_m_country and c_m_region):
+        raise RuntimeError(
+            f"Mapping CSV must include columns: country, region_group. Found: {list(m.columns)}"
+        )
+
+    m = m[[c_m_country, c_m_region]].copy()
+    m.columns = ["country", "region_group"]
+    m["country"] = m["country"].astype(str).str.strip()
+    m["region_group"] = m["region_group"].astype(str).str.strip()
+
+    out = out.merge(m, on="country", how="left")
+    out["region_group"] = out["region_group"].fillna("Unknown").astype(str).str.strip()
+
+    return out
 
 def _dev(val, target):
     """Percentage deviation vs target, as a percent of target."""
@@ -192,8 +188,9 @@ def _dev(val, target):
     diff_pct = (float(val) - float(target)) / float(target) * 100.0
     return _fmt_pct(diff_pct, signed=True, decimals=1)
 
-def _grid_html(rows, metric_col, target_val, origin_iata):
+def _grid_html(rows, metric_col, target_val, origin_iata, out_of_region=None):
     chips = []
+    oor = set(out_of_region or [])
     for _, r in rows.iterrows():
         code = str(r["iata"])
         pax_val = r[metric_col]
@@ -203,7 +200,13 @@ def _grid_html(rows, metric_col, target_val, origin_iata):
         pax_html = f"<span class='pax'>{pax_txt} passengers</span>"
         dev_html = f"<span class='dev'>{dev_txt} vs target</span>" if dev_txt else "<span class='dev'>&nbsp;</span>"
 
-        cls = "chip origin" if code == origin_iata else "chip"
+        if code == origin_iata:
+            cls = "chip origin"
+        elif code in oor:
+            cls = "chip oor"
+        else:
+            cls = "chip"
+
         chips.append(
             f"<div class='{cls}'>"
             f"<span class='code'>{code}</span>"
@@ -213,59 +216,67 @@ def _grid_html(rows, metric_col, target_val, origin_iata):
         )
     return "".join(chips)
 
-def _nearest_sets(df, iata, topn=15):
+def _nearest_sets(df, iata, in_n=IN_REGION_N, out_n=OUT_REGION_N):
     """
-    Throughput-only similarity.
-    Finds the top-N airports with total passengers closest to the target.
+    Throughput-only similarity with region split:
+      - in_n closest airports within the target's region_group
+      - out_n closest airports outside the target's region_group
+    Returns: target_row, peers_df, union_set, out_of_region_set
     """
     t = df.loc[df["iata"] == iata].iloc[0]
     cand = df[df["iata"] != iata].copy()
 
+    target_region = str(t.get("region_group", "Unknown"))
+
     cand = cand.assign(abs_diff_pax=(cand["total_passengers"] - t["total_passengers"]).abs())
-    r_total = (
-        cand.sort_values(["abs_diff_pax", "total_passengers"], ascending=[True, False])
-            .drop_duplicates(subset=["iata"], keep="first")
-            .head(topn)
+
+    cand_in = cand[cand["region_group"] == target_region].copy()
+    cand_out = cand[cand["region_group"] != target_region].copy()
+
+    top_in = (
+        cand_in.sort_values(["abs_diff_pax", "total_passengers"], ascending=[True, False])
+              .drop_duplicates(subset=["iata"], keep="first")
+              .head(in_n)
+    )
+    top_out = (
+        cand_out.sort_values(["abs_diff_pax", "total_passengers"], ascending=[True, False])
+               .drop_duplicates(subset=["iata"], keep="first")
+               .head(out_n)
     )
 
-    sets = {"total": r_total}
-    union = {iata} | set(r_total["iata"])
-    return t, sets, union
+    peers = pd.concat([top_in, top_out], ignore_index=True)
+    out_of_region = set(top_out["iata"].astype(str).str.upper().tolist())
+
+    union = {iata} | set(peers["iata"].astype(str).str.upper().tolist())
+    return t, peers, union, out_of_region
 
 def build_grid(
     excel_path: str,
     iata: str,
     out_html: str | None = None,
-    iata_to_city: dict | None = None,
 ):
     """
     Build a throughput-only similarity set for a target IATA.
-
-    iata_to_city is optional and allows the header to display "IATA (City)"
-    without relying on airport name columns in the ACI sheet.
+    Selection rule:
+      - 10 peers in the target's region_group
+      - 5 peers out of region
     """
     df = _load_aci(excel_path)
     if df[df["iata"] == iata].empty:
         raise ValueError(f"IATA '{iata}' not found in ACI file.")
 
     target_iata = iata.upper()
-    target, sets, union = _nearest_sets(df, target_iata, topn=15)
-    r_total = sets["total"]
+    target, peers, union, out_of_region = _nearest_sets(df, target_iata)
 
     target_total = df.loc[df["iata"] == target_iata, "total_passengers"].iloc[0]
+    total_html = _grid_html(
+        peers, "total_passengers", target_total, target_iata, out_of_region=out_of_region
+    )
 
-    total_html = _grid_html(r_total, "total_passengers", target_total, target_iata)
+    header_title = f"{target_iata} – overview of airports with similar throughput."
+    header_meta  = f"Target: {target_iata} – {_fmt_int(target_total)} passengers"
 
-    city = ""
-    if isinstance(iata_to_city, dict):
-        city = str(iata_to_city.get(target_iata, "") or "")
-    city = city.strip()
-    target_label = f"{target_iata} ({city})" if city else target_iata
-
-    header_title = f"{target_label}, overview of airports with similar throughput."
-    header_meta  = f"Target: {target_label}, {_fmt_int(target_total)} passengers"
-
-    doc_title = f"{target_iata} - Airports with similar passenger throughput"
+    doc_title = f"{target_iata} – Airports with similar passenger throughput"
 
     header = f"""
     <div class="header">
@@ -288,7 +299,7 @@ def build_grid(
         with open(out_html, "w", encoding="utf-8") as f:
             f.write(html)
 
-    nearest_list = r_total["iata"].tolist()
+    nearest_list = peers["iata"].tolist()
 
     return {
         "html": html,
