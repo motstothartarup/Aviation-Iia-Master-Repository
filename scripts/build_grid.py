@@ -80,6 +80,8 @@ CSS = """
 </style>
 """
 
+ACI_SHEET = "Working Global"
+
 def _norm(s):
     return re.sub(r"\s+"," ",str(s)).strip().lower()
 
@@ -102,40 +104,84 @@ def _fmt_pct(x, signed=False, decimals=1):
     sign = "+" if (signed and val >= 0) else ""
     return f"{sign}{val:.{decimals}f}%"
 
+def _read_working_global(excel_path: str) -> pd.DataFrame:
+    """
+    Read the 'Working Global' sheet with a best-effort header detection.
+    This avoids reliance on prior column layouts and supports pared-down columns.
+    """
+    raw = pd.read_excel(excel_path, sheet_name=ACI_SHEET, header=None)
+
+    # Find a likely header row within the first ~30 rows.
+    # Common marker: "Airport Code" somewhere in the row.
+    header_row = None
+    scan_n = min(30, len(raw))
+    for i in range(scan_n):
+        row = raw.iloc[i].astype(str).str.strip().str.lower()
+        if row.str.contains(r"\bairport\s*code\b", na=False).any():
+            header_row = i
+            break
+
+    if header_row is None:
+        # Fallback: assume the same header offset as older ACI exports.
+        raw2 = pd.read_excel(excel_path, sheet_name=ACI_SHEET, header=2)
+        return raw2
+
+    hdr = [_norm(x) for x in raw.iloc[header_row].tolist()]
+    df = raw.iloc[header_row + 1 :].copy()
+    df.columns = hdr
+    return df
+
 def _load_aci(excel_path: str) -> pd.DataFrame:
     """
-    Load ACI Excel and return a DataFrame with:
+    Load ACI Excel (Working Global tab) and return a DataFrame with:
       - iata
-      - citystate (optional)
-      - country (optional)
+      - country
       - total_passengers
 
-    Does not rely on airport name or other omitted columns.
+    This version does not rely on airport name or other omitted columns.
     """
-    raw = pd.read_excel(excel_path, sheet_name="Working Global", header=2)
+    raw = _read_working_global(excel_path)
     df = raw.rename(columns={c: _norm(c) for c in raw.columns}).copy()
 
-    c_country   = _pick(df, ["country"])
-    c_citystate = _pick(df, ["city/state", "citystate", "city, state", "city / state"])
-    c_iata      = _pick(df, ["airport code", "iata", "code"])
-    c_total     = _pick(df, ["total passengers", "passengers total", "total pax", "total passenger"])
+    # Prefer named columns if present
+    c_country = _pick(df, ["country"])
+    c_iata    = _pick(df, ["airport code", "iata", "code"])
+    c_total   = _pick(df, ["total passengers", "passengers total", "total pax", "total passenger"])
 
-    df["iata"]  = df[c_iata].astype(str).str.upper() if c_iata else ""
+    # Fallback to fixed positions in the pared-down sheet:
+    # Rank = A (0), Country = C (2), Airport Code = F (5), Total Passengers = M (12)
+    if (c_country is None) or (c_iata is None) or (c_total is None):
+        df2 = pd.read_excel(excel_path, sheet_name=ACI_SHEET, header=None)
+        # Try to align to the first data row by finding the header row again
+        # and then selecting rows beneath it.
+        header_row = None
+        scan_n = min(30, len(df2))
+        for i in range(scan_n):
+            row = df2.iloc[i].astype(str).str.strip().str.lower()
+            if row.str.contains(r"\bairport\s*code\b", na=False).any():
+                header_row = i
+                break
+        start = (header_row + 1) if header_row is not None else 3
+        df = df2.iloc[start:].copy()
+        df = df.rename(
+            columns={
+                2: "country",
+                5: "airport code",
+                12: "total passengers",
+            }
+        )
+        c_country, c_iata, c_total = "country", "airport code", "total passengers"
+
+    df["country"] = df[c_country].astype(str) if c_country else ""
+    df["iata"] = df[c_iata].astype(str).str.upper() if c_iata else ""
     df["total_passengers"] = pd.to_numeric(df[c_total], errors="coerce") if c_total else np.nan
 
-    if c_country:
-        df["country"] = df[c_country].astype(str)
-    else:
-        df["country"] = None
-
-    if c_citystate:
-        df["citystate"] = df[c_citystate].astype(str)
-    else:
-        df["citystate"] = None
-
+    # Keep only what we can reliably use
+    df["iata"] = df["iata"].astype(str).str.strip()
+    df = df[(df["iata"].notna()) & (df["iata"] != "")]
     df = df.dropna(subset=["iata", "total_passengers"]).reset_index(drop=True)
 
-    return df
+    return df[["iata", "country", "total_passengers"]].copy()
 
 def _dev(val, target):
     """Percentage deviation vs target, as a percent of target."""
@@ -190,9 +236,13 @@ def build_grid(
     excel_path: str,
     iata: str,
     out_html: str | None = None,
+    iata_to_city: dict | None = None,
 ):
     """
     Build a throughput-only similarity set for a target IATA.
+
+    iata_to_city is optional and allows the header to display "IATA (City)"
+    without relying on airport name columns in the ACI sheet.
     """
     df = _load_aci(excel_path)
     if df[df["iata"] == iata].empty:
@@ -207,18 +257,15 @@ def build_grid(
     total_html = _grid_html(r_total, "total_passengers", target_total, target_iata)
 
     city = ""
-    try:
-        v = df.loc[df["iata"] == target_iata, "citystate"].iloc[0]
-        city = str(v).strip() if v is not None else ""
-    except Exception:
-        city = ""
-
+    if isinstance(iata_to_city, dict):
+        city = str(iata_to_city.get(target_iata, "") or "")
+    city = city.strip()
     target_label = f"{target_iata} ({city})" if city else target_iata
 
-    header_title = f"{target_label} – overview of airports with similar throughput."
-    header_meta  = f"Target: {target_label} – {_fmt_int(target_total)} passengers"
+    header_title = f"{target_label}, overview of airports with similar throughput."
+    header_meta  = f"Target: {target_label}, {_fmt_int(target_total)} passengers"
 
-    doc_title = f"{target_iata} – Airports with similar passenger throughput"
+    doc_title = f"{target_iata} - Airports with similar passenger throughput"
 
     header = f"""
     <div class="header">
