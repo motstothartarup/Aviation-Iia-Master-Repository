@@ -1,7 +1,7 @@
 # scripts/build_grid.py
 # Output: Throughput-only list and grid from your ACI Excel.
-# For a given target IATA, finds the closest airports by total passengers,
-# split into 10 within the target region group and 5 out of region.
+# For a given target IATA, finds 10 closest airports within the target region group
+# and 5 closest airports out of region, by total passengers.
 # Exposes build_grid(...). Also runnable as a script to write docs/grid.html.
 
 import os, re, argparse
@@ -115,46 +115,36 @@ def _fmt_pct(x, signed=False, decimals=1):
 
 def _load_aci(excel_path: str) -> pd.DataFrame:
     """
-    Load ACI Excel (Working Global tab) and return a DataFrame with:
-      - iata
-      - country
-      - region_group
-      - total_passengers
+    Load ACI Excel from the 'Working Global' tab.
+
+    Headers are on Excel row 3, so we read with header=2 (0-indexed).
+    We only rely on fixed columns:
+      - Rank: A
+      - Country: C
+      - Airport Code (IATA): F
+      - Total Passengers: M
     """
-    # Try header=0 first (common for simplified tabs). Fallback to header=2 (legacy ACI style).
-    raw = None
-    for hdr in (0, 2):
-        try:
-            raw = pd.read_excel(excel_path, sheet_name=EXCEL_SHEET, header=hdr)
-            if raw is not None and len(raw.columns) > 0:
-                break
-        except Exception:
-            raw = None
+    # Header row is Excel row 3 -> header=2
+    df = pd.read_excel(
+        excel_path,
+        sheet_name=EXCEL_SHEET,
+        header=2,
+        usecols="A,C,F,M",
+    ).copy()
 
-    if raw is None:
-        raise RuntimeError(f"Could not read sheet '{EXCEL_SHEET}' from: {excel_path}")
+    # Normalize and rename to stable internal names
+    df.columns = ["rank", "country", "iata", "total_passengers"]
 
-    df = raw.rename(columns={c: _norm(c) for c in raw.columns}).copy()
+    df["country"] = df["country"].astype(str).str.strip()
+    df["iata"] = df["iata"].astype(str).str.strip().str.upper()
+    df["total_passengers"] = pd.to_numeric(df["total_passengers"], errors="coerce")
 
-    c_country = _pick(df, ["country"])
-    c_iata    = _pick(df, ["airport code", "iata", "code"])
-    c_total   = _pick(df, ["total passengers", "passengers", "total pax"])
+    # Basic cleanup
+    df = df.dropna(subset=["iata", "country", "total_passengers"]).copy()
+    df = df[df["iata"].astype(str).str.len().between(2, 4)].copy()
+    df = df.drop_duplicates(subset=["iata"], keep="first").reset_index(drop=True)
 
-    if not (c_country and c_iata and c_total):
-        raise RuntimeError(
-            f"Missing required columns in '{EXCEL_SHEET}'. Found: {list(df.columns)}. "
-            f"Need: country, airport code/IATA, total passengers."
-        )
-
-    out = pd.DataFrame()
-    out["country"] = df[c_country].astype(str).str.strip()
-    out["iata"] = df[c_iata].astype(str).str.strip().str.upper()
-    out["total_passengers"] = pd.to_numeric(df[c_total], errors="coerce")
-
-    out = out.dropna(subset=["iata", "country", "total_passengers"]).copy()
-    out = out[out["iata"].astype(str).str.len().between(2, 4)].copy()
-    out = out.drop_duplicates(subset=["iata"], keep="first").reset_index(drop=True)
-
+    # Region grouping via mapping CSV
     if not os.path.exists(COUNTRY_REGION_MAP_CSV):
         raise RuntimeError(f"Missing country-to-region mapping file: {COUNTRY_REGION_MAP_CSV}")
 
@@ -163,7 +153,6 @@ def _load_aci(excel_path: str) -> pd.DataFrame:
 
     c_m_country = _pick(m, ["country"])
     c_m_region  = _pick(m, ["region_group", "region", "group"])
-
     if not (c_m_country and c_m_region):
         raise RuntimeError(
             f"Mapping CSV must include columns: country, region_group. Found: {list(m.columns)}"
@@ -174,10 +163,10 @@ def _load_aci(excel_path: str) -> pd.DataFrame:
     m["country"] = m["country"].astype(str).str.strip()
     m["region_group"] = m["region_group"].astype(str).str.strip()
 
-    out = out.merge(m, on="country", how="left")
-    out["region_group"] = out["region_group"].fillna("Unknown").astype(str).str.strip()
+    df = df.merge(m, on="country", how="left")
+    df["region_group"] = df["region_group"].fillna("Unknown").astype(str).str.strip()
 
-    return out
+    return df
 
 def _dev(val, target):
     """Percentage deviation vs target, as a percent of target."""
@@ -273,10 +262,10 @@ def build_grid(
         peers, "total_passengers", target_total, target_iata, out_of_region=out_of_region
     )
 
-    header_title = f"{target_iata} – overview of airports with similar throughput."
-    header_meta  = f"Target: {target_iata} – {_fmt_int(target_total)} passengers"
+    header_title = f"{target_iata} - overview of airports with similar throughput."
+    header_meta  = f"Target: {target_iata} - {_fmt_int(target_total)} passengers"
 
-    doc_title = f"{target_iata} – Airports with similar passenger throughput"
+    doc_title = f"{target_iata} - Airports with similar passenger throughput"
 
     header = f"""
     <div class="header">
