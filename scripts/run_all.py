@@ -11,10 +11,16 @@ from build_grid import build_grid
 from build_aca_table import build_aca_table_html
 from build_map import build_map
 
+# Updated ACI file location
 EXCEL_PATH = "data/Copy of ACI 2024 North America Traffic Report (1).xlsx"
+
 DOCS_DIR = "docs"
 RUNS_DIR = os.path.join(DOCS_DIR, "runs")
 MANIFEST = os.path.join(RUNS_DIR, "index.json")
+
+# Stable "live" outputs for an in-page run experience (page can always load docs/live/*)
+LIVE_DIR = os.path.join(DOCS_DIR, "live")
+LIVE_STATUS = os.path.join(LIVE_DIR, "status.json")
 
 # Use simple tokens instead of .format() to avoid brace conflicts in CSS/JS.
 DASHBOARD_TEMPLATE = r"""<!doctype html><meta charset="utf-8">
@@ -207,6 +213,11 @@ def _save_manifest(man):
     with open(MANIFEST, "w", encoding="utf-8") as f:
         json.dump(man, f, ensure_ascii=False, indent=2)
 
+def _write_live_status(payload: dict) -> None:
+    os.makedirs(LIVE_DIR, exist_ok=True)
+    with open(LIVE_STATUS, "w", encoding="utf-8") as f:
+        json.dump(payload, f, ensure_ascii=False, indent=2)
+
 def main():
     ap = argparse.ArgumentParser(
         description="Build grid + ACA table + ACA map and publish to docs/"
@@ -239,6 +250,13 @@ def main():
 
     os.makedirs(DOCS_DIR, exist_ok=True)
     os.makedirs(RUNS_DIR, exist_ok=True)
+    os.makedirs(LIVE_DIR, exist_ok=True)
+
+    # Optional: mark "running" for live UI polling
+    try:
+        _write_live_status({"ok": False, "iata": iata, "status": "running", "ts": int(time.time())})
+    except Exception:
+        pass
 
     # 1) Grid (throughput-only similarity)
     grid_out_path = os.path.join(DOCS_DIR, "grid.html")
@@ -272,6 +290,13 @@ def main():
     with open(os.path.join(DOCS_DIR, "index.html"), "w", encoding="utf-8") as f:
         f.write(dash_html)
 
+    # 4.5) Stable live outputs for an in-page run experience
+    with open(os.path.join(LIVE_DIR, "grid.html"), "w", encoding="utf-8") as f:
+        f.write(grid_html)
+    with open(os.path.join(LIVE_DIR, "aca_table.html"), "w", encoding="utf-8") as f:
+        f.write(aca_html)
+    fmap.save(os.path.join(LIVE_DIR, "aca_map.html"))
+
     # 5) Snapshot + manifest
     ts = int(time.time())
     run_dir = f"{RUNS_DIR}/{iata}-{ts}"
@@ -296,11 +321,21 @@ def main():
     manifest["runs"] = manifest["runs"][-100:]
     _save_manifest(manifest)
 
+    # Mark live as complete (for polling)
+    try:
+        _write_live_status({"ok": True, "iata": iata, "status": "complete", "ts": ts})
+    except Exception:
+        pass
+
     print("Wrote:")
     print("  docs/grid.html")
     print("  docs/aca_table.html")
     print("  docs/aca_map.html")
     print("  docs/index.html")
+    print("  docs/live/grid.html")
+    print("  docs/live/aca_table.html")
+    print("  docs/live/aca_map.html")
+    print("  docs/live/status.json")
     print(f"  {run_dir}/grid.html")
     print(f"  {run_dir}/aca_table.html")
     print(f"  {run_dir}/aca_map.html")
