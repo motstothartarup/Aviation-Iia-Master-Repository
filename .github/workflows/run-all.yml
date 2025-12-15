@@ -40,34 +40,33 @@ jobs:
         run: |
           python scripts/run_all.py --iata "${{ github.event.inputs.iata }}"
 
+      - name: Compute run vars
+        run: |
+          IATA="$(echo "${{ github.event.inputs.iata }}" | tr '[:lower:]' '[:upper:]' | tr -d '[:space:]')"
+          TS="$(date -u +%s)"
+          RUN_KEY="$(date -u +%Y%m%d_%H%M%S)_${IATA}_${{ github.run_id }}"
+          echo "IATA=${IATA}" >> $GITHUB_ENV
+          echo "TS=${TS}" >> $GITHUB_ENV
+          echo "RUN_KEY=${RUN_KEY}" >> $GITHUB_ENV
+
       - name: Archive this run under docs/runs and update manifest
-        env:
-          IATA_IN: ${{ github.event.inputs.iata }}
-          RUN_ID: ${{ github.run_id }}
         run: |
           set -e
 
-          IATA="$(echo "$IATA_IN" | tr '[:lower:]' '[:upper:]' | tr -d '[:space:]')"
-          TS="$(date -u +%s)"
-          RUN_KEY="$(date -u +%Y%m%d_%H%M%S)_${IATA}_${RUN_ID}"
           RUN_DIR="docs/runs/${RUN_KEY}"
-
           mkdir -p "${RUN_DIR}"
 
-          # Copy the latest generated pages into the run folder
           cp -f docs/grid.html      "${RUN_DIR}/grid.html"
           cp -f docs/aca_table.html "${RUN_DIR}/aca_table.html"
           cp -f docs/aca_map.html   "${RUN_DIR}/aca_map.html"
 
-          # Update docs/runs/runs_manifest.json (newest first, keep last 200)
-          python - <<PY
+          python - <<'PY'
           import json, os
 
           manifest_path = "docs/runs/runs_manifest.json"
-
-          iata = os.environ.get("IATA", "").strip().upper()
-          ts = int(os.environ.get("TS", "0"))
-          run_key = os.environ.get("RUN_KEY", "").strip()
+          iata = os.environ["IATA"]
+          ts = int(os.environ["TS"])
+          run_key = os.environ["RUN_KEY"]
 
           entry = {"iata": iata, "ts": ts, "path": f"runs/{run_key}"}
 
@@ -84,22 +83,8 @@ jobs:
 
           with open(manifest_path, "w", encoding="utf-8") as f:
             json.dump({"runs": runs}, f, indent=2)
-            f.write("\\n")
+            f.write("\n")
           PY
-        shell: bash
-        env:
-          IATA: ${{ github.event.inputs.iata }}
-          TS: ${{ github.run_id }} # placeholder, overwritten below
-          RUN_KEY: ${{ github.run_id }} # placeholder, overwritten below
-
-      - name: Export vars for manifest update
-        run: |
-          IATA="$(echo "${{ github.event.inputs.iata }}" | tr '[:lower:]' '[:upper:]' | tr -d '[:space:]')"
-          TS="$(date -u +%s)"
-          RUN_KEY="$(date -u +%Y%m%d_%H%M%S)_${IATA}_${{ github.run_id }}"
-          echo "IATA=${IATA}" >> $GITHUB_ENV
-          echo "TS=${TS}" >> $GITHUB_ENV
-          echo "RUN_KEY=${RUN_KEY}" >> $GITHUB_ENV
 
       - name: Commit and push site files
         run: |
