@@ -1,4 +1,4 @@
-name: Build grid + ACA table (HTML)
+name: Build grid + ACA table + map (HTML)
 
 on:
   workflow_dispatch:
@@ -16,9 +16,11 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout
+        uses: actions/checkout@v4
 
-      - uses: actions/setup-python@v5
+      - name: Set up Python
+        uses: actions/setup-python@v5
         with:
           python-version: "3.11"
 
@@ -27,12 +29,11 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
-      - name: Ensure docs folders
+      - name: Ensure docs folders + manifest
         run: |
-          mkdir -p docs
-          mkdir -p docs/runs
-          if [ ! -f docs/runs/manifest.json ]; then
-            echo '{ "runs": [] }' > docs/runs/manifest.json
+          mkdir -p docs docs/runs
+          if [ ! -f docs/runs/runs_manifest.json ]; then
+            echo '{ "runs": [] }' > docs/runs/runs_manifest.json
           fi
 
       - name: Run all builders (writes docs/grid.html, docs/aca_table.html, docs/aca_map.html)
@@ -58,27 +59,22 @@ jobs:
           cp -f docs/aca_table.html "${RUN_DIR}/aca_table.html"
           cp -f docs/aca_map.html   "${RUN_DIR}/aca_map.html"
 
-          # Update docs/runs/manifest.json, newest first, keep last 200
-          python - <<'PY'
+          # Update docs/runs/runs_manifest.json (newest first, keep last 200)
+          python - <<PY
           import json, os
-          from datetime import datetime
 
-          manifest_path = "docs/runs/manifest.json"
+          manifest_path = "docs/runs/runs_manifest.json"
 
-          iata = os.environ["IATA"]
-          ts = int(os.environ["TS"])
-          run_key = os.environ["RUN_KEY"]
+          iata = os.environ.get("IATA", "").strip().upper()
+          ts = int(os.environ.get("TS", "0"))
+          run_key = os.environ.get("RUN_KEY", "").strip()
 
-          entry = {
-            "iata": iata,
-            "ts": ts,
-            "path": f"runs/{run_key}"
-          }
+          entry = {"iata": iata, "ts": ts, "path": f"runs/{run_key}"}
 
-          if os.path.exists(manifest_path):
+          try:
             with open(manifest_path, "r", encoding="utf-8") as f:
               data = json.load(f) or {}
-          else:
+          except FileNotFoundError:
             data = {}
 
           runs = data.get("runs") or []
@@ -86,18 +82,17 @@ jobs:
           runs.insert(0, entry)
           runs = sorted(runs, key=lambda r: int(r.get("ts") or 0), reverse=True)[:200]
 
-          out = {"runs": runs}
           with open(manifest_path, "w", encoding="utf-8") as f:
-            json.dump(out, f, indent=2)
-            f.write("\n")
+            json.dump({"runs": runs}, f, indent=2)
+            f.write("\\n")
           PY
         shell: bash
         env:
           IATA: ${{ github.event.inputs.iata }}
-          TS: ${{ github.run_id }} # overwritten below
-          RUN_KEY: ${{ github.run_id }} # overwritten below
-        # Fix env values for the inline python block
-      - name: Fix env for manifest update (export vars)
+          TS: ${{ github.run_id }} # placeholder, overwritten below
+          RUN_KEY: ${{ github.run_id }} # placeholder, overwritten below
+
+      - name: Export vars for manifest update
         run: |
           IATA="$(echo "${{ github.event.inputs.iata }}" | tr '[:lower:]' '[:upper:]' | tr -d '[:space:]')"
           TS="$(date -u +%s)"
@@ -121,5 +116,5 @@ jobs:
           NAME=${REPO#*/}
           echo "Open the combined page:"
           echo "  https://${USER_OR_ORG}.github.io/${NAME}/"
-          echo "Manifest:"
-          echo "  https://${USER_OR_ORG}.github.io/${NAME}/runs/manifest.json"
+          echo "Runs manifest:"
+          echo "  https://${USER_OR_ORG}.github.io/${NAME}/runs/runs_manifest.json"
