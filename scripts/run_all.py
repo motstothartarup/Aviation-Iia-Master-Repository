@@ -1,6 +1,6 @@
 # scripts/run_all.py
 # Build ALL outputs + dashboard with a "Reset" modal to switch between prior runs
-# and a link to trigger a new build via workflow_dispatch.
+# plus a novice-friendly "Run new build" instructions modal.
 
 import os
 import time
@@ -30,7 +30,7 @@ DASHBOARD_TEMPLATE = r"""<!doctype html><meta charset="utf-8">
   h2 { margin:0; font-size:20px; }
   .btn {
     display:inline-flex; align-items:center; gap:8px; padding:8px 12px; border-radius:10px;
-    border:1px solid var(--border); background:#fff; cursor:pointer; font-size:14px;
+    border:1px solid var(--border); background:#fff; cursor:pointer; font-size:14px; text-decoration:none;
   }
   .btn:hover { background:#fafbfc; }
   .card { background:var(--card); border:1px solid var(--border); border-radius:12px; box-shadow:0 2px 10px rgba(0,0,0,.05); padding:10px 10px; margin:12px 0; }
@@ -43,7 +43,7 @@ DASHBOARD_TEMPLATE = r"""<!doctype html><meta charset="utf-8">
     position:fixed; inset:0; background:rgba(0,0,0,.35); display:none; align-items:center; justify-content:center; z-index:9999;
   }
   .modal {
-    width:min(640px, 94vw); background:#fff; border-radius:12px; box-shadow:0 20px 50px rgba(0,0,0,.25);
+    width:min(720px, 94vw); background:#fff; border-radius:12px; box-shadow:0 20px 50px rgba(0,0,0,.25);
     border:1px solid var(--border); padding:16px;
   }
   .modal h3 { margin:0 0 8px 0; font-size:18px; }
@@ -53,10 +53,13 @@ DASHBOARD_TEMPLATE = r"""<!doctype html><meta charset="utf-8">
     width:100%; font:14px/1.2 inherit; padding:8px 10px; border-radius:8px; border:1px solid var(--border); background:#fff;
   }
   .row { display:flex; gap:10px; align-items:center; flex-wrap:wrap; }
-  .actions { display:flex; gap:10px; justify-content:flex-end; margin-top:12px; }
+  .actions { display:flex; gap:10px; justify-content:flex-end; margin-top:12px; flex-wrap:wrap; }
   .btn-primary { background:var(--accent); color:#fff; border-color:var(--accent); }
   .btn-primary:hover { filter:brightness(0.95); }
   .hint { font-size:12px; color:var(--muted); }
+  ol.howto { margin:0; padding-left:18px; color:#111827; font-size:14px; line-height:1.5; }
+  ol.howto li { margin-bottom:8px; }
+  .note { font-size:13px; color:#374151; margin-bottom:10px; }
 </style>
 
 <div class="wrap">
@@ -64,7 +67,7 @@ DASHBOARD_TEMPLATE = r"""<!doctype html><meta charset="utf-8">
     <h2 id="title">__TITLE__</h2>
     <div class="row">
       <button id="btnReset" class="btn" type="button">Reset / Choose another run</button>
-      <a id="btnAction" class="btn" href="__ACTIONS_URL__" target="_blank" rel="noopener">Run new build</a>
+      <button id="btnRunHelp" class="btn" type="button">Run new build</button>
     </div>
   </div>
 
@@ -84,7 +87,7 @@ DASHBOARD_TEMPLATE = r"""<!doctype html><meta charset="utf-8">
   </div>
 </div>
 
-<!-- Modal -->
+<!-- Reset modal -->
 <div class="modal-backdrop" id="modalBg" aria-hidden="true">
   <div class="modal" role="dialog" aria-modal="true" aria-labelledby="modalTitle">
     <h3 id="modalTitle">Reset / Choose another run</h3>
@@ -97,15 +100,38 @@ DASHBOARD_TEMPLATE = r"""<!doctype html><meta charset="utf-8">
       <div>
         <label>Run a new build</label>
         <div class="hint">
-          Click “Run new build” at the top right of this page, then enter a new IATA code
-          in the GitHub Actions form. After the Action finishes, refresh this page and pick
-          the new run from the list on the left.
+          Click “Run new build” at the top right of this page, then follow the on screen steps.
+          After the Action finishes, refresh this page and pick the new run from the list on the left.
         </div>
       </div>
     </div>
     <div class="actions">
       <button class="btn" id="btnClose" type="button">Close</button>
       <button class="btn btn-primary" id="btnApplyRun" type="button">View selected run</button>
+    </div>
+  </div>
+</div>
+
+<!-- Run new build help modal -->
+<div class="modal-backdrop" id="runModalBg" aria-hidden="true">
+  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="runModalTitle">
+    <h3 id="runModalTitle">Run a new build</h3>
+
+    <div class="note">
+      To run a new build, follow these steps in GitHub Actions.
+    </div>
+
+    <ol class="howto">
+      <li>Click <strong>Open GitHub Actions</strong> below.</li>
+      <li>In GitHub, find the workflow and click <strong>Run workflow</strong>.</li>
+      <li>Enter the <strong>IATA code</strong> (example: <strong>LAX</strong>), then click <strong>Run workflow</strong> to start.</li>
+      <li>Wait for the workflow run to finish (green checkmark when done).</li>
+      <li>Come back here, refresh this page, click <strong>Reset / Choose another run</strong>, and select the new run.</li>
+    </ol>
+
+    <div class="actions" style="margin-top:14px;">
+      <button class="btn" id="btnRunClose" type="button">Close</button>
+      <a class="btn btn-primary" href="__ACTIONS_URL__" target="_blank" rel="noopener">Open GitHub Actions</a>
     </div>
   </div>
 </div>
@@ -123,6 +149,10 @@ DASHBOARD_TEMPLATE = r"""<!doctype html><meta charset="utf-8">
   const btnClose  = document.getElementById('btnClose');
   const runSelect = document.getElementById('runSelect');
   const btnApply  = document.getElementById('btnApplyRun');
+
+  const btnRunHelp = document.getElementById('btnRunHelp');
+  const runModalBg = document.getElementById('runModalBg');
+  const btnRunClose = document.getElementById('btnRunClose');
 
   // Relay ACA table clicks to the map iframe
   window.addEventListener('message', (ev) => {
@@ -146,10 +176,25 @@ DASHBOARD_TEMPLATE = r"""<!doctype html><meta charset="utf-8">
     modalBg.setAttribute("aria-hidden", "true");
   }
 
+  function openRunModal(){
+    runModalBg.style.display = "flex";
+    runModalBg.setAttribute("aria-hidden", "false");
+  }
+  function closeRunModal(){
+    runModalBg.style.display = "none";
+    runModalBg.setAttribute("aria-hidden", "true");
+  }
+
   btnReset.addEventListener('click', openModal);
   btnClose.addEventListener('click', closeModal);
   modalBg.addEventListener('click', (e)=>{
     if (e.target === modalBg) closeModal();
+  });
+
+  btnRunHelp.addEventListener('click', openRunModal);
+  btnRunClose.addEventListener('click', closeRunModal);
+  runModalBg.addEventListener('click', (e)=>{
+    if (e.target === runModalBg) closeRunModal();
   });
 
   async function loadRuns(){
@@ -171,7 +216,7 @@ DASHBOARD_TEMPLATE = r"""<!doctype html><meta charset="utf-8">
     }
     runs.sort((a,b)=> (b.ts||0) - (a.ts||0));
     runSelect.innerHTML = runs.map(r=>{
-      const label = `${r.iata} — ${new Date((r.ts||0)*1000).toLocaleString()}`;
+      const label = `${r.iata} | ${new Date((r.ts||0)*1000).toLocaleString()}`;
       return `<option value="${r.path}">${label}</option>`;
     }).join("");
   }
@@ -184,7 +229,7 @@ DASHBOARD_TEMPLATE = r"""<!doctype html><meta charset="utf-8">
     acaFrame.src  = p + "/aca_table.html";
     mapFrame.src  = p + "/aca_map.html";
     const iata  = run.iata || "";
-    titleEl.textContent = `${iata} — Grid + ACA + Map`;
+    titleEl.textContent = `${iata} | Grid + ACA + Map`;
     closeModal();
   });
 
@@ -231,7 +276,7 @@ def main():
     ap.add_argument(
         "--workflow-file",
         default="run-both.yml",
-        help="Workflow file name used for the 'Run new build' link.",
+        help="Workflow file name used for the GitHub Actions link.",
     )
     args = ap.parse_args()
 
@@ -262,7 +307,7 @@ def main():
     )
     dash_html = (
         DASHBOARD_TEMPLATE
-        .replace("__TITLE__", f"{iata} — Grid + ACA + Map")
+        .replace("__TITLE__", f"{iata} | Grid + ACA + Map")
         .replace("__GRID__", "grid.html")
         .replace("__ACA__", "aca_table.html")
         .replace("__MAP__", "aca_map.html")
