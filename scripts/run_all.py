@@ -70,7 +70,9 @@ DASHBOARD_TEMPLATE = r"""<!doctype html><meta charset="utf-8">
     <h2 id="title">__TITLE__</h2>
     <div class="row">
       <button id="btnReset" class="btn" type="button">Reset / Choose another run</button>
-      <a id="btnAction" class="btn" href="__ACTIONS_URL__" target="_blank" rel="noopener">Run new build</a>
+
+      <!-- CHANGED: this button opens a help modal instead of linking directly -->
+      <button id="btnRunHelp" class="btn" type="button">Run new build</button>
     </div>
   </div>
 
@@ -116,6 +118,29 @@ DASHBOARD_TEMPLATE = r"""<!doctype html><meta charset="utf-8">
   </div>
 </div>
 
+<!-- NEW: Run new build help modal -->
+<div class="modal-backdrop" id="runModalBg" aria-hidden="true">
+  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="runModalTitle">
+    <h3 id="runModalTitle">Run a new build</h3>
+    <div class="hint" style="font-size:13px; margin-bottom:10px; color:#374151;">
+      To run a new build, follow these steps in GitHub Actions.
+    </div>
+
+    <ol style="margin:0; padding-left:18px; color:#111827; font-size:14px; line-height:1.5;">
+      <li style="margin-bottom:8px;">Click <strong>Open GitHub Actions</strong> below.</li>
+      <li style="margin-bottom:8px;">Click <strong>Run workflow</strong>.</li>
+      <li style="margin-bottom:8px;">Enter a new <strong>IATA code</strong> (example: <strong>LAX</strong>).</li>
+      <li style="margin-bottom:8px;">Click <strong>Run workflow</strong> to start.</li>
+      <li>When it finishes, refresh this page, then use <strong>Reset / Choose another run</strong> to select it.</li>
+    </ol>
+
+    <div class="actions" style="margin-top:12px;">
+      <button class="btn" id="btnRunClose" type="button">Close</button>
+      <a class="btn btn-primary" href="__ACTIONS_URL__" target="_blank" rel="noopener">Open GitHub Actions</a>
+    </div>
+  </div>
+</div>
+
 <script>
 (function(){
   const runManifestUrl = "runs/index.json";
@@ -129,6 +154,11 @@ DASHBOARD_TEMPLATE = r"""<!doctype html><meta charset="utf-8">
   const btnClose  = document.getElementById('btnClose');
   const runSelect = document.getElementById('runSelect');
   const btnApply  = document.getElementById('btnApplyRun');
+
+  // NEW: run-help modal wiring
+  const btnRunHelp  = document.getElementById('btnRunHelp');
+  const runModalBg  = document.getElementById('runModalBg');
+  const btnRunClose = document.getElementById('btnRunClose');
 
   // Relay ACA table clicks to the map iframe
   window.addEventListener('message', (ev) => {
@@ -152,10 +182,27 @@ DASHBOARD_TEMPLATE = r"""<!doctype html><meta charset="utf-8">
     modalBg.setAttribute("aria-hidden", "true");
   }
 
+  // NEW: open/close run-help modal
+  function openRunModal(){
+    runModalBg.style.display = "flex";
+    runModalBg.setAttribute("aria-hidden", "false");
+  }
+  function closeRunModal(){
+    runModalBg.style.display = "none";
+    runModalBg.setAttribute("aria-hidden", "true");
+  }
+
   btnReset.addEventListener('click', openModal);
   btnClose.addEventListener('click', closeModal);
   modalBg.addEventListener('click', (e)=>{
     if (e.target === modalBg) closeModal();
+  });
+
+  // NEW: run-help events
+  btnRunHelp.addEventListener('click', openRunModal);
+  btnRunClose.addEventListener('click', closeRunModal);
+  runModalBg.addEventListener('click', (e)=>{
+    if (e.target === runModalBg) closeRunModal();
   });
 
   async function loadRuns(){
