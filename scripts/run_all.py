@@ -1,6 +1,6 @@
 # scripts/run_all.py
 # Build ALL outputs + dashboard with a "Reset" modal to switch between prior runs
-# plus a novice-friendly "Run new build" instructions modal.
+# and a link to trigger a new build via workflow_dispatch.
 
 import os
 import time
@@ -11,10 +11,16 @@ from build_grid import build_grid
 from build_aca_table import build_aca_table_html
 from build_map import build_map
 
-EXCEL_PATH = "data/ACI_2024_NA_Traffic.xlsx"
+# Updated ACI file location
+EXCEL_PATH = "data/Copy of ACI 2024 North America Traffic Report (1).xlsx"
+
 DOCS_DIR = "docs"
 RUNS_DIR = os.path.join(DOCS_DIR, "runs")
 MANIFEST = os.path.join(RUNS_DIR, "index.json")
+
+# Stable "live" outputs for an in-page run experience (page can always load docs/live/*)
+LIVE_DIR = os.path.join(DOCS_DIR, "live")
+LIVE_STATUS = os.path.join(LIVE_DIR, "status.json")
 
 # Use simple tokens instead of .format() to avoid brace conflicts in CSS/JS.
 DASHBOARD_TEMPLATE = r"""<!doctype html><meta charset="utf-8">
@@ -30,7 +36,7 @@ DASHBOARD_TEMPLATE = r"""<!doctype html><meta charset="utf-8">
   h2 { margin:0; font-size:20px; }
   .btn {
     display:inline-flex; align-items:center; gap:8px; padding:8px 12px; border-radius:10px;
-    border:1px solid var(--border); background:#fff; cursor:pointer; font-size:14px; text-decoration:none;
+    border:1px solid var(--border); background:#fff; cursor:pointer; font-size:14px;
   }
   .btn:hover { background:#fafbfc; }
   .card { background:var(--card); border:1px solid var(--border); border-radius:12px; box-shadow:0 2px 10px rgba(0,0,0,.05); padding:10px 10px; margin:12px 0; }
@@ -43,7 +49,7 @@ DASHBOARD_TEMPLATE = r"""<!doctype html><meta charset="utf-8">
     position:fixed; inset:0; background:rgba(0,0,0,.35); display:none; align-items:center; justify-content:center; z-index:9999;
   }
   .modal {
-    width:min(720px, 94vw); background:#fff; border-radius:12px; box-shadow:0 20px 50px rgba(0,0,0,.25);
+    width:min(640px, 94vw); background:#fff; border-radius:12px; box-shadow:0 20px 50px rgba(0,0,0,.25);
     border:1px solid var(--border); padding:16px;
   }
   .modal h3 { margin:0 0 8px 0; font-size:18px; }
@@ -53,13 +59,10 @@ DASHBOARD_TEMPLATE = r"""<!doctype html><meta charset="utf-8">
     width:100%; font:14px/1.2 inherit; padding:8px 10px; border-radius:8px; border:1px solid var(--border); background:#fff;
   }
   .row { display:flex; gap:10px; align-items:center; flex-wrap:wrap; }
-  .actions { display:flex; gap:10px; justify-content:flex-end; margin-top:12px; flex-wrap:wrap; }
+  .actions { display:flex; gap:10px; justify-content:flex-end; margin-top:12px; }
   .btn-primary { background:var(--accent); color:#fff; border-color:var(--accent); }
   .btn-primary:hover { filter:brightness(0.95); }
   .hint { font-size:12px; color:var(--muted); }
-  ol.howto { margin:0; padding-left:18px; color:#111827; font-size:14px; line-height:1.5; }
-  ol.howto li { margin-bottom:8px; }
-  .note { font-size:13px; color:#374151; margin-bottom:10px; }
 </style>
 
 <div class="wrap">
@@ -67,7 +70,7 @@ DASHBOARD_TEMPLATE = r"""<!doctype html><meta charset="utf-8">
     <h2 id="title">__TITLE__</h2>
     <div class="row">
       <button id="btnReset" class="btn" type="button">Reset / Choose another run</button>
-      <button id="btnRunHelp" class="btn" type="button">Run new build</button>
+      <a id="btnAction" class="btn" href="__ACTIONS_URL__" target="_blank" rel="noopener">Run new build</a>
     </div>
   </div>
 
@@ -87,7 +90,7 @@ DASHBOARD_TEMPLATE = r"""<!doctype html><meta charset="utf-8">
   </div>
 </div>
 
-<!-- Reset modal -->
+<!-- Modal -->
 <div class="modal-backdrop" id="modalBg" aria-hidden="true">
   <div class="modal" role="dialog" aria-modal="true" aria-labelledby="modalTitle">
     <h3 id="modalTitle">Reset / Choose another run</h3>
@@ -100,38 +103,15 @@ DASHBOARD_TEMPLATE = r"""<!doctype html><meta charset="utf-8">
       <div>
         <label>Run a new build</label>
         <div class="hint">
-          Click “Run new build” at the top right of this page, then follow the on screen steps.
-          After the Action finishes, refresh this page and pick the new run from the list on the left.
+          Click “Run new build” at the top right of this page, then enter a new IATA code
+          in the GitHub Actions form. After the Action finishes, refresh this page and pick
+          the new run from the list on the left.
         </div>
       </div>
     </div>
     <div class="actions">
       <button class="btn" id="btnClose" type="button">Close</button>
       <button class="btn btn-primary" id="btnApplyRun" type="button">View selected run</button>
-    </div>
-  </div>
-</div>
-
-<!-- Run new build help modal -->
-<div class="modal-backdrop" id="runModalBg" aria-hidden="true">
-  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="runModalTitle">
-    <h3 id="runModalTitle">Run a new build</h3>
-
-    <div class="note">
-      To run a new build, follow these steps in GitHub Actions.
-    </div>
-
-    <ol class="howto">
-      <li>Click <strong>Open GitHub Actions</strong> below.</li>
-      <li>In GitHub, find the workflow and click <strong>Run workflow</strong>.</li>
-      <li>Enter the <strong>IATA code</strong> (example: <strong>LAX</strong>), then click <strong>Run workflow</strong> to start.</li>
-      <li>Wait for the workflow run to finish (green checkmark when done).</li>
-      <li>Come back here, refresh this page, click <strong>Reset / Choose another run</strong>, and select the new run.</li>
-    </ol>
-
-    <div class="actions" style="margin-top:14px;">
-      <button class="btn" id="btnRunClose" type="button">Close</button>
-      <a class="btn btn-primary" href="__ACTIONS_URL__" target="_blank" rel="noopener">Open GitHub Actions</a>
     </div>
   </div>
 </div>
@@ -149,10 +129,6 @@ DASHBOARD_TEMPLATE = r"""<!doctype html><meta charset="utf-8">
   const btnClose  = document.getElementById('btnClose');
   const runSelect = document.getElementById('runSelect');
   const btnApply  = document.getElementById('btnApplyRun');
-
-  const btnRunHelp = document.getElementById('btnRunHelp');
-  const runModalBg = document.getElementById('runModalBg');
-  const btnRunClose = document.getElementById('btnRunClose');
 
   // Relay ACA table clicks to the map iframe
   window.addEventListener('message', (ev) => {
@@ -176,25 +152,10 @@ DASHBOARD_TEMPLATE = r"""<!doctype html><meta charset="utf-8">
     modalBg.setAttribute("aria-hidden", "true");
   }
 
-  function openRunModal(){
-    runModalBg.style.display = "flex";
-    runModalBg.setAttribute("aria-hidden", "false");
-  }
-  function closeRunModal(){
-    runModalBg.style.display = "none";
-    runModalBg.setAttribute("aria-hidden", "true");
-  }
-
   btnReset.addEventListener('click', openModal);
   btnClose.addEventListener('click', closeModal);
   modalBg.addEventListener('click', (e)=>{
     if (e.target === modalBg) closeModal();
-  });
-
-  btnRunHelp.addEventListener('click', openRunModal);
-  btnRunClose.addEventListener('click', closeRunModal);
-  runModalBg.addEventListener('click', (e)=>{
-    if (e.target === runModalBg) closeRunModal();
   });
 
   async function loadRuns(){
@@ -216,7 +177,7 @@ DASHBOARD_TEMPLATE = r"""<!doctype html><meta charset="utf-8">
     }
     runs.sort((a,b)=> (b.ts||0) - (a.ts||0));
     runSelect.innerHTML = runs.map(r=>{
-      const label = `${r.iata} | ${new Date((r.ts||0)*1000).toLocaleString()}`;
+      const label = `${r.iata} — ${new Date((r.ts||0)*1000).toLocaleString()}`;
       return `<option value="${r.path}">${label}</option>`;
     }).join("");
   }
@@ -229,7 +190,7 @@ DASHBOARD_TEMPLATE = r"""<!doctype html><meta charset="utf-8">
     acaFrame.src  = p + "/aca_table.html";
     mapFrame.src  = p + "/aca_map.html";
     const iata  = run.iata || "";
-    titleEl.textContent = `${iata} | Grid + ACA + Map`;
+    titleEl.textContent = `${iata} — Grid + ACA + Map`;
     closeModal();
   });
 
@@ -251,6 +212,11 @@ def _save_manifest(man):
     os.makedirs(RUNS_DIR, exist_ok=True)
     with open(MANIFEST, "w", encoding="utf-8") as f:
         json.dump(man, f, ensure_ascii=False, indent=2)
+
+def _write_live_status(payload: dict) -> None:
+    os.makedirs(LIVE_DIR, exist_ok=True)
+    with open(LIVE_STATUS, "w", encoding="utf-8") as f:
+        json.dump(payload, f, ensure_ascii=False, indent=2)
 
 def main():
     ap = argparse.ArgumentParser(
@@ -276,7 +242,7 @@ def main():
     ap.add_argument(
         "--workflow-file",
         default="run-both.yml",
-        help="Workflow file name used for the GitHub Actions link.",
+        help="Workflow file name used for the 'Run new build' link.",
     )
     args = ap.parse_args()
 
@@ -284,6 +250,13 @@ def main():
 
     os.makedirs(DOCS_DIR, exist_ok=True)
     os.makedirs(RUNS_DIR, exist_ok=True)
+    os.makedirs(LIVE_DIR, exist_ok=True)
+
+    # Optional: mark "running" for live UI polling
+    try:
+        _write_live_status({"ok": False, "iata": iata, "status": "running", "ts": int(time.time())})
+    except Exception:
+        pass
 
     # 1) Grid (throughput-only similarity)
     grid_out_path = os.path.join(DOCS_DIR, "grid.html")
@@ -307,7 +280,7 @@ def main():
     )
     dash_html = (
         DASHBOARD_TEMPLATE
-        .replace("__TITLE__", f"{iata} | Grid + ACA + Map")
+        .replace("__TITLE__", f"{iata} — Grid + ACA + Map")
         .replace("__GRID__", "grid.html")
         .replace("__ACA__", "aca_table.html")
         .replace("__MAP__", "aca_map.html")
@@ -316,6 +289,13 @@ def main():
     )
     with open(os.path.join(DOCS_DIR, "index.html"), "w", encoding="utf-8") as f:
         f.write(dash_html)
+
+    # 4.5) Stable live outputs for an in-page run experience
+    with open(os.path.join(LIVE_DIR, "grid.html"), "w", encoding="utf-8") as f:
+        f.write(grid_html)
+    with open(os.path.join(LIVE_DIR, "aca_table.html"), "w", encoding="utf-8") as f:
+        f.write(aca_html)
+    fmap.save(os.path.join(LIVE_DIR, "aca_map.html"))
 
     # 5) Snapshot + manifest
     ts = int(time.time())
@@ -341,11 +321,21 @@ def main():
     manifest["runs"] = manifest["runs"][-100:]
     _save_manifest(manifest)
 
+    # Mark live as complete (for polling)
+    try:
+        _write_live_status({"ok": True, "iata": iata, "status": "complete", "ts": ts})
+    except Exception:
+        pass
+
     print("Wrote:")
     print("  docs/grid.html")
     print("  docs/aca_table.html")
     print("  docs/aca_map.html")
     print("  docs/index.html")
+    print("  docs/live/grid.html")
+    print("  docs/live/aca_table.html")
+    print("  docs/live/aca_map.html")
+    print("  docs/live/status.json")
     print(f"  {run_dir}/grid.html")
     print(f"  {run_dir}/aca_table.html")
     print(f"  {run_dir}/aca_map.html")
