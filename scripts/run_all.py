@@ -128,11 +128,14 @@ DASHBOARD_TEMPLATE = r"""<!doctype html><meta charset="utf-8">
 
     <ol style="margin:0; padding-left:18px; color:#111827; font-size:14px; line-height:1.5;">
       <li style="margin-bottom:8px;">Click <strong>Open GitHub Actions</strong> below.</li>
+      <li style="margin-bottom:8px;">On the Actions page, click the workflow named <strong>Build grid + ACA table + map</strong> (or the closest matching name).</li>
       <li style="margin-bottom:8px;">Click <strong>Run workflow</strong>.</li>
       <li style="margin-bottom:8px;">Enter a new <strong>IATA code</strong> (example: <strong>LAX</strong>).</li>
-      <li style="margin-bottom:8px;">Click <strong>Run workflow</strong> to start.</li>
+      <li style="margin-bottom:8px;">Click <strong>Run workflow</strong> again to start the run.</li>
+      <li style="margin-bottom:8px;">Wait about <strong>1.5 minutes</strong> for it to finish and publish the new pages.</li>
       <li>When it finishes, refresh this page, then use <strong>Reset / Choose another run</strong> to select it.</li>
     </ol>
+
 
     <div class="actions" style="margin-top:12px;">
       <button class="btn" id="btnRunClose" type="button">Close</button>
