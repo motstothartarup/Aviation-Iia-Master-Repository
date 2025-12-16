@@ -111,9 +111,16 @@ DASHBOARD_TEMPLATE = r"""<!doctype html><meta charset="utf-8">
         </div>
       </div>
     </div>
-    <div class="actions">
-      <button class="btn" id="btnClose" type="button">Close</button>
-      <button class="btn btn-primary" id="btnApplyRun" type="button">View selected run</button>
+    <div style="margin-top:12px;">
+      <label for="iataInput" style="display:block; font-size:13px; color:#374151; margin-bottom:4px;">IATA code</label>
+      <input id="iataInput" placeholder="LAX" maxlength="3"
+        style="width:100%; font:14px/1.2 inherit; padding:8px 10px; border-radius:8px; border:1px solid #e5e7eb; background:#fff;" />
+      <div id="runMsg" class="hint" style="margin-top:8px;"></div>
+
+      <div class="actions" style="margin-top:12px;">
+        <button class="btn" id="btnRunClose" type="button">Close</button>
+        <button class="btn btn-primary" id="btnRunNow" type="button">Run build now</button>
+      </div>
     </div>
   </div>
 </div>
