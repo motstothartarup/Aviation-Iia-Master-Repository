@@ -124,7 +124,7 @@ DASHBOARD_TEMPLATE = r"""<!doctype html><meta charset="utf-8">
 
     <div class="hint" style="font-size:13px; margin-bottom:10px; color:#374151;">
       Enter an IATA code and start a build. It takes about <strong>1.5 minutes</strong> to finish and publish.
-      After it finishes, refresh this page and use <strong>Reset / Choose another run</strong> to select the new run.
+      This page will auto-update when the new run appears.
     </div>
 
     <div style="margin-top:12px;">
@@ -135,7 +135,15 @@ DASHBOARD_TEMPLATE = r"""<!doctype html><meta charset="utf-8">
 
       <div class="actions" style="margin-top:12px;">
         <button class="btn" id="btnRunClose" type="button">Close</button>
-        <button class="btn btn-primary" id="btnRunNow" type="button">Run build now</button>
+        <button
+          class="btn btn-primary"
+          id="btnRunNow"
+          type="button"
+          style="padding:6px 10px; border-radius:10px; font-size:13px; line-height:1.1; white-space:nowrap; max-width:100%;"
+        >
+          Run build now
+        </button>
+
       </div>
     </div>
   </div>
@@ -219,8 +227,10 @@ DASHBOARD_TEMPLATE = r"""<!doctype html><meta charset="utf-8">
       const data = await res.json();
       runsCache = data.runs || [];
       renderRunOptions(runsCache);
+      return runsCache;
     } catch(err){
       runSelect.innerHTML = '<option value="">No manifest found</option>';
+      return [];
     }
   }
 
@@ -236,17 +246,35 @@ DASHBOARD_TEMPLATE = r"""<!doctype html><meta charset="utf-8">
     }).join("");
   }
 
-  btnApply.addEventListener('click', ()=>{
-    const p = runSelect.value;
-    if (!p) return;
-    const run = runsCache.find(r => r.path === p) || {};
+  function switchToRun(run){
+    if (!run || !run.path) return;
+    const p = run.path;
     gridFrame.src = p + "/grid.html";
     acaFrame.src  = p + "/aca_table.html";
     mapFrame.src  = p + "/aca_map.html";
     const iata  = run.iata || "";
     titleEl.textContent = `${iata} — Grid + ACA + Map`;
+  }
+
+  btnApply.addEventListener('click', ()=>{
+    const p = runSelect.value;
+    if (!p) return;
+    const run = runsCache.find(r => r.path === p) || {};
+    switchToRun(run);
     closeModal();
   });
+
+  // NEW: poll runs/index.json until the requested IATA appears with a newer timestamp
+  async function waitForRun(iata, startTs){
+    const deadline = Date.now() + 150000; // ~2.5 min
+    while (Date.now() < deadline){
+      const list = await loadRuns(); // refresh cache + dropdown
+      const found = (list || []).find(r => (r.iata || "").toUpperCase() === iata && (r.ts || 0) > startTs);
+      if (found) return found;
+      await new Promise(res => setTimeout(res, 4000)); // poll every ~4s
+    }
+    return null;
+  }
 
   btnRunNow.addEventListener('click', async () => {
     const iata = (iataInput.value || "").trim().toUpperCase();
@@ -255,7 +283,15 @@ DASHBOARD_TEMPLATE = r"""<!doctype html><meta charset="utf-8">
       return;
     }
 
+    btnRunNow.disabled = true;
     runMsg.textContent = "Starting build…";
+
+    // Record current latest timestamp for this IATA so we can detect the new run
+    const initialList = await loadRuns();
+    const latest = (initialList || [])
+      .filter(r => (r.iata || "").toUpperCase() === iata)
+      .sort((a,b)=> (b.ts||0) - (a.ts||0))[0];
+    const startTs = latest ? (latest.ts || 0) : 0;
 
     try {
       const res = await fetch(RUN_WORKER_URL, {
@@ -267,12 +303,26 @@ DASHBOARD_TEMPLATE = r"""<!doctype html><meta charset="utf-8">
       const data = await res.json().catch(() => ({}));
       if (!res.ok || !data.ok) {
         runMsg.textContent = "Could not start build. " + (data.error ? String(data.error).slice(0, 160) : "");
+        btnRunNow.disabled = false;
         return;
       }
 
-      runMsg.textContent = "Build started. It takes about 1.5 minutes. Refresh this page, then use “Reset / Choose another run” to select it.";
+      runMsg.textContent = "Build started. Waiting for the new run to publish…";
+
+      const newRun = await waitForRun(iata, startTs);
+      if (newRun) {
+        switchToRun(newRun);
+        runMsg.textContent = "Published. Switched to the new run.";
+        // Optional: close the modal after switching
+        setTimeout(() => { closeRunModal(); btnRunNow.disabled = false; }, 600);
+      } else {
+        runMsg.textContent = "Build started, but the new run has not appeared yet. Wait a bit longer, then refresh this page.";
+        btnRunNow.disabled = false;
+      }
+
     } catch (e) {
       runMsg.textContent = "Network error starting build.";
+      btnRunNow.disabled = false;
     }
   });
 
