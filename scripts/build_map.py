@@ -365,7 +365,7 @@ def build_map(target_iata=None, highlight_iatas=None) -> folium.Map:
         zoomControl=True,
         prefer_canvas=True,
         location=[center_lat, center_lon],
-        zoom_start=4.7,
+        zoom_start=5.2,
     )
 
     # Apply initial view based on parsed region group from grid.html
