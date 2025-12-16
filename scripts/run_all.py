@@ -71,7 +71,7 @@ DASHBOARD_TEMPLATE = r"""<!doctype html><meta charset="utf-8">
     <div class="row">
       <button id="btnReset" class="btn" type="button">Reset / Choose another run</button>
 
-      <!-- CHANGED: this button opens a help modal instead of linking directly -->
+      <!-- CHANGED: this button runs a build from the site (no GitHub access required) -->
       <button id="btnRunHelp" class="btn" type="button">Run new build</button>
     </div>
   </div>
@@ -92,7 +92,7 @@ DASHBOARD_TEMPLATE = r"""<!doctype html><meta charset="utf-8">
   </div>
 </div>
 
-<!-- Modal -->
+<!-- Modal: Reset / Choose another run -->
 <div class="modal-backdrop" id="modalBg" aria-hidden="true">
   <div class="modal" role="dialog" aria-modal="true" aria-labelledby="modalTitle">
     <h3 id="modalTitle">Reset / Choose another run</h3>
@@ -105,12 +105,28 @@ DASHBOARD_TEMPLATE = r"""<!doctype html><meta charset="utf-8">
       <div>
         <label>Run a new build</label>
         <div class="hint">
-          Click “Run new build” at the top right of this page, then enter a new IATA code
-          in the GitHub Actions form. After the Action finishes, refresh this page and pick
-          the new run from the list on the left.
+          Use “Run new build” at the top right to start a run.
+          After it finishes, refresh this page and pick the new run on the left.
         </div>
       </div>
     </div>
+    <div class="actions">
+      <button class="btn" id="btnClose" type="button">Close</button>
+      <button class="btn btn-primary" id="btnApplyRun" type="button">View selected run</button>
+    </div>
+  </div>
+</div>
+
+<!-- Modal: Run new build (public trigger via Cloudflare Worker) -->
+<div class="modal-backdrop" id="runModalBg" aria-hidden="true">
+  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="runModalTitle">
+    <h3 id="runModalTitle">Run a new build</h3>
+
+    <div class="hint" style="font-size:13px; margin-bottom:10px; color:#374151;">
+      Enter an IATA code and start a build. It takes about <strong>1.5 minutes</strong> to finish and publish.
+      After it finishes, refresh this page and use <strong>Reset / Choose another run</strong> to select the new run.
+    </div>
+
     <div style="margin-top:12px;">
       <label for="iataInput" style="display:block; font-size:13px; color:#374151; margin-bottom:4px;">IATA code</label>
       <input id="iataInput" placeholder="LAX" maxlength="3"
@@ -121,32 +137,6 @@ DASHBOARD_TEMPLATE = r"""<!doctype html><meta charset="utf-8">
         <button class="btn" id="btnRunClose" type="button">Close</button>
         <button class="btn btn-primary" id="btnRunNow" type="button">Run build now</button>
       </div>
-    </div>
-  </div>
-</div>
-
-<!-- NEW: Run new build help modal -->
-<div class="modal-backdrop" id="runModalBg" aria-hidden="true">
-  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="runModalTitle">
-    <h3 id="runModalTitle">Run a new build</h3>
-    <div class="hint" style="font-size:13px; margin-bottom:10px; color:#374151;">
-      To run a new build, follow these steps in GitHub Actions.
-    </div>
-
-    <ol style="margin:0; padding-left:18px; color:#111827; font-size:14px; line-height:1.5;">
-      <li style="margin-bottom:8px;">Click <strong>Open GitHub Actions</strong> below.</li>
-      <li style="margin-bottom:8px;">On the Actions page, click the workflow named <strong>Build grid + ACA table + map</strong> (or the closest matching name).</li>
-      <li style="margin-bottom:8px;">Click <strong>Run workflow</strong>.</li>
-      <li style="margin-bottom:8px;">Enter a new <strong>IATA code</strong> (example: <strong>LAX</strong>).</li>
-      <li style="margin-bottom:8px;">Click <strong>Run workflow</strong> again to start the run.</li>
-      <li style="margin-bottom:8px;">Wait about <strong>1.5 minutes</strong> for it to finish and publish the new pages.</li>
-      <li>When it finishes, refresh this page, then use <strong>Reset / Choose another run</strong> to select it.</li>
-    </ol>
-
-
-    <div class="actions" style="margin-top:12px;">
-      <button class="btn" id="btnRunClose" type="button">Close</button>
-      <a class="btn btn-primary" href="__ACTIONS_URL__" target="_blank" rel="noopener">Open GitHub Actions</a>
     </div>
   </div>
 </div>
@@ -165,10 +155,17 @@ DASHBOARD_TEMPLATE = r"""<!doctype html><meta charset="utf-8">
   const runSelect = document.getElementById('runSelect');
   const btnApply  = document.getElementById('btnApplyRun');
 
-  // NEW: run-help modal wiring
+  // Run-build modal wiring
   const btnRunHelp  = document.getElementById('btnRunHelp');
   const runModalBg  = document.getElementById('runModalBg');
   const btnRunClose = document.getElementById('btnRunClose');
+
+  const btnRunNow = document.getElementById('btnRunNow');
+  const iataInput = document.getElementById('iataInput');
+  const runMsg    = document.getElementById('runMsg');
+
+  // IMPORTANT: set your Worker URL here
+  const RUN_WORKER_URL = "https://aviation-build-trigger.motstothart-arup.workers.dev";
 
   // Relay ACA table clicks to the map iframe
   window.addEventListener('message', (ev) => {
@@ -192,10 +189,11 @@ DASHBOARD_TEMPLATE = r"""<!doctype html><meta charset="utf-8">
     modalBg.setAttribute("aria-hidden", "true");
   }
 
-  // NEW: open/close run-help modal
   function openRunModal(){
     runModalBg.style.display = "flex";
     runModalBg.setAttribute("aria-hidden", "false");
+    if (runMsg) runMsg.textContent = "";
+    if (iataInput) iataInput.value = "";
   }
   function closeRunModal(){
     runModalBg.style.display = "none";
@@ -208,7 +206,6 @@ DASHBOARD_TEMPLATE = r"""<!doctype html><meta charset="utf-8">
     if (e.target === modalBg) closeModal();
   });
 
-  // NEW: run-help events
   btnRunHelp.addEventListener('click', openRunModal);
   btnRunClose.addEventListener('click', closeRunModal);
   runModalBg.addEventListener('click', (e)=>{
@@ -249,6 +246,34 @@ DASHBOARD_TEMPLATE = r"""<!doctype html><meta charset="utf-8">
     const iata  = run.iata || "";
     titleEl.textContent = `${iata} — Grid + ACA + Map`;
     closeModal();
+  });
+
+  btnRunNow.addEventListener('click', async () => {
+    const iata = (iataInput.value || "").trim().toUpperCase();
+    if (!/^[A-Z0-9]{3}$/.test(iata)) {
+      runMsg.textContent = "Please enter a valid 3-character IATA code (example: LAX).";
+      return;
+    }
+
+    runMsg.textContent = "Starting build…";
+
+    try {
+      const res = await fetch(RUN_WORKER_URL, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ iata })
+      });
+
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || !data.ok) {
+        runMsg.textContent = "Could not start build. " + (data.error ? String(data.error).slice(0, 160) : "");
+        return;
+      }
+
+      runMsg.textContent = "Build started. It takes about 1.5 minutes. Refresh this page, then use “Reset / Choose another run” to select it.";
+    } catch (e) {
+      runMsg.textContent = "Network error starting build.";
+    }
   });
 
   loadRuns();
