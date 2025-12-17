@@ -1,0 +1,89 @@
+<!doctype html><meta charset="utf-8">
+<title>DEN - Airports with similar passenger throughput</title>
+
+<style>
+:root{
+  --gap:18px;
+  --radius:16px;
+  --ink:#111827;
+  --muted:#6b7280;
+  --border:#e5e7eb;
+  --chipbg:#f6f8fa;
+}
+.container{
+  max-width:100%;
+  width:100%;
+  margin:14px auto 18px auto;
+  padding:0 24px 24px 24px;
+  font-family:Inter,system-ui,Arial;
+  box-sizing:border-box;
+}
+.header h3{
+  margin:4px 0;
+  font-size:20px;
+}
+.header .meta{
+  color:var(--muted);
+  margin-top:2px;
+  font-size:13px;
+}
+.row{
+  margin:18px 0 0 0;
+}
+.grid{
+  display:grid;
+  grid-template-columns:repeat(5,minmax(140px,1fr));
+  gap:var(--gap);
+}
+.chip{
+  display:flex;
+  flex-direction:column;
+  align-items:center;
+  justify-content:center;
+  min-height:120px;
+  padding:16px 18px;
+  border:1px solid var(--border);
+  border-radius:var(--radius);
+  background:var(--chipbg);
+  color:var(--ink);
+  text-align:center;
+  box-sizing:border-box;
+}
+.chip .code{
+  font-weight:800;
+  line-height:1.1;
+  font-size:16px;
+}
+.chip .pax{
+  font-size:13px;
+  color:var(--ink);
+  line-height:1.2;
+  margin-top:6px;
+}
+.chip .dev{
+  font-size:12px;
+  color:var(--muted);
+  line-height:1.2;
+  margin-top:4px;
+}
+.chip.origin{
+  box-shadow:0 0 0 2px rgba(231,76,60,.22) inset;
+  border-color:#E74C3C;
+}
+</style>
+
+<div class="container">
+  
+    <div class="header">
+      <h3>DEN - Peer Airports by Throughput</h3>
+      <div class="meta">Target: DEN - 82,358,744 passengers</div>
+    </div>
+  
+    <div class="row">
+      <div class="header">
+        <h3>Regional Peers (Unknown)</h3>
+      </div>
+      <div class="grid"><div class='chip'><span class='code'>LHR</span><span class='pax'>83,884,572 passengers</span><span class='dev'>+1.9% vs target</span></div><div class='chip'><span class='code'>IST</span><span class='pax'>80,073,252 passengers</span><span class='dev'>-2.8% vs target</span></div><div class='chip'><span class='code'>ORD</span><span class='pax'>80,043,050 passengers</span><span class='dev'>-2.8% vs target</span></div><div class='chip'><span class='code'>HND</span><span class='pax'>85,900,617 passengers</span><span class='dev'>+4.3% vs target</span></div><div class='chip'><span class='code'>DEL</span><span class='pax'>77,820,834 passengers</span><span class='dev'>-5.5% vs target</span></div><div class='chip'><span class='code'>DFW</span><span class='pax'>87,817,864 passengers</span><span class='dev'>+6.6% vs target</span></div><div class='chip'><span class='code'>PVG</span><span class='pax'>76,787,039 passengers</span><span class='dev'>-6.8% vs target</span></div><div class='chip'><span class='code'>LAX</span><span class='pax'>76,588,028 passengers</span><span class='dev'>-7.0% vs target</span></div><div class='chip'><span class='code'>CAN</span><span class='pax'>76,365,092 passengers</span><span class='dev'>-7.3% vs target</span></div><div class='chip'><span class='code'>DXB</span><span class='pax'>92,331,506 passengers</span><span class='dev'>+12.1% vs target</span></div><div class='chip'><span class='code'>ICN</span><span class='pax'>71,212,515 passengers</span><span class='dev'>-13.5% vs target</span></div><div class='chip'><span class='code'>CDG</span><span class='pax'>70,290,260 passengers</span><span class='dev'>-14.7% vs target</span></div><div class='chip'><span class='code'>SIN</span><span class='pax'>67,650,000 passengers</span><span class='dev'>-17.9% vs target</span></div><div class='chip'><span class='code'>PEK</span><span class='pax'>67,367,428 passengers</span><span class='dev'>-18.2% vs target</span></div><div class='chip'><span class='code'>AMS</span><span class='pax'>66,828,759 passengers</span><span class='dev'>-18.9% vs target</span></div></div>
+    </div>
+  
+</div>
